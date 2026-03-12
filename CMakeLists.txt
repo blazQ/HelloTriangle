@@ -170,5 +170,5 @@ function (add_chapter CHAPTER_NAME)
   endif ()
 endfunction ()
 
-add_chapter (main)
+add_chapter (main SHADER shaders/shader)
 

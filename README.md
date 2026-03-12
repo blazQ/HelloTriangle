@@ -35,4 +35,18 @@ Messy notes about general concepts:
     - Color blending stage mixes different fragments that map to the same pixel.
         - For example if a transparent red glass has a yellow wall behind it, you'll mix the colors based on this information
     
-    
+## On the Vertex Shader
+- Written in Slang, compiled to SPIR-V.
+    - SPIR-V is a bytecode format and Vulkan has released a platform independent compiler to avoid GPU vendor specific oddities
+    - Slang is a shading language with C-style syntax, similar with HLSL, with built-in vector and matrix primitives
+- Input: World position, color, normal and texture coordinates of the incoming vertex
+- Output: Final position in clip coordinates and the attributes that need to get passed on to the fragment shader
+- **Clip coordinates** are four-dimensional vectors (x, y, z, w)
+    - The 4th coordinate is what makes perspective work
+    - Objects further away get a larger w
+- Clip coordinates turn into **normalized device coordinates**, which are 3-dimensional vectors where every coordinate is divided by w.
+    - (x/w, y/w, z/w)
+    - They map the framebuffer into a [-1, 1] [-1, 1] coordinate system.
+    - Vulkan flips the sign of the Y coordinate compared to OpenGL
+        - It better reflects how image/texture memory layout actually works
+        - Be mindful of backface culling and windling order when porting from OpenGL
