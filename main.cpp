@@ -56,6 +56,7 @@ private:
 	vk::Extent2D swapChainExtent;
 	std::vector<vk::raii::ImageView> swapChainImageViews;
 	vk::raii::PipelineLayout pipelineLayout = nullptr;
+	vk::raii::Pipeline graphicsPipeline = nullptr;
 
 	std::vector<const char *> requiredDeviceExtension = {
 		vk::KHRSwapchainExtensionName};
@@ -103,6 +104,7 @@ private:
 		vk::PipelineShaderStageCreateInfo vertShaderStageInfo{.stage = vk::ShaderStageFlagBits::eVertex, .module = shaderModule, .pName = "vertMain"};
 		vk::PipelineShaderStageCreateInfo fragShaderStageInfo{.stage = vk::ShaderStageFlagBits::eFragment, .module = shaderModule, .pName = "fragMain"};
 		vk::PipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
+		vk::PipelineVertexInputStateCreateInfo vertexInputInfo;
 
 		std::vector dynamicStates = {
 			vk::DynamicState::eViewport,
@@ -124,6 +126,20 @@ private:
 		vk::PipelineLayoutCreateInfo pipelineLayoutInfo{.setLayoutCount = 0, .pushConstantRangeCount = 0};
 
 		pipelineLayout = vk::raii::PipelineLayout(device, pipelineLayoutInfo);
+		vk::PipelineRenderingCreateInfo pipelineRenderingCreateInfo{.colorAttachmentCount = 1, .pColorAttachmentFormats = &swapChainSurfaceFormat.format};
+		vk::GraphicsPipelineCreateInfo pipelineInfo{.pNext = &pipelineRenderingCreateInfo,
+													.stageCount = 2,
+													.pStages = shaderStages,
+													.pVertexInputState = &vertexInputInfo,
+													.pInputAssemblyState = &inputAssembly,
+													.pViewportState = &viewportState,
+													.pRasterizationState = &rasterizer,
+													.pMultisampleState = &multisampling,
+													.pColorBlendState = &colorBlending,
+													.pDynamicState = &dynamicState,
+													.layout = pipelineLayout,
+													.renderPass = nullptr};
+		graphicsPipeline = vk::raii::Pipeline(device, nullptr, pipelineInfo);
 	}
 
 	void mainLoop()
@@ -289,10 +305,10 @@ private:
 
 		// query for Vulkan 1.3 features
 		vk::StructureChain<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT> featureChain = {
-			{},							    // vk::PhysicalDeviceFeatures2
+			{},								// vk::PhysicalDeviceFeatures2
 			{.shaderDrawParameters = true}, // vk::PhysicalDeviceVulkan11Features
-			{.dynamicRendering = true},	    // vk::PhysicalDeviceVulkan13Features
-			{.extendedDynamicState = true}  // vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT
+			{.dynamicRendering = true},		// vk::PhysicalDeviceVulkan13Features
+			{.extendedDynamicState = true}	// vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT
 		};
 
 		// create a Device
