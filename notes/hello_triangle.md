@@ -52,3 +52,14 @@
 - `vk::DeviceQueueCreateInfo` specifies one queue from the chosen family at priority `0.5f`
 - `vk::DeviceCreateInfo` ties it together: the feature chain, queue info, and required extensions (`VK_KHR_swapchain`)
 - The resulting `vk::raii::Queue` is retrieved immediately via `vk::raii::Queue(device, queueIndex, 0)` and stored as `queue`
+
+
+## Window Surface
+- Vulkan doesn't know how to interface with the window system on its own, it requires a WSI (Window System Integration) extensions.
+- `VK_KHR_surface` is an example of an instance-level WSI.
+- It has to be created right after instance creation, because it can influence the physical device selection.
+- Vulkan can render without a surface, for off-screen rendering.
+- In the tutorial we used GLFW, which is a simple API for creating windows, contexts and surfaces, receiving input and events.
+  - Under the hood, GLFW creates a compatible window surface based on the OP window system. 
+    - For example, on Windows, it uses the glfwGetWind32Window to get the raw HWND and creates a compatible Vulkan Win32SurfaceKHR using RAII.
+- This affects the logical device creation: we need to select a device that has the capability of both rendering graphics but also present to a compatible surface (check previous paragraph)
