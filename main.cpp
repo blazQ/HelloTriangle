@@ -91,6 +91,8 @@ private:
 	std::vector<vk::raii::CommandBuffer> commandBuffers;
 	vk::raii::Buffer vertexBuffer = nullptr;
 	vk::raii::DeviceMemory vertexBufferMemory = nullptr;
+	vk::raii::Buffer indexBuffer = nullptr;
+	vk::raii::DeviceMemory indexBufferMemory = nullptr;
 
 	// A Vector of Semaphores to signal when frames have been presented
 	std::vector<vk::raii::Semaphore> presentCompleteSemaphores;
@@ -121,9 +123,14 @@ private:
 						1, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, color))};
 		}
 	};
-	const std::vector<Vertex> vertices = {{{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}},
-										  {{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
-										  {{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}};
+	const std::vector<Vertex> vertices = {
+		{{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+		{{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
+		{{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
+		{{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}}};
+
+	const std::vector<uint16_t> indices = {
+		0, 1, 2, 2, 3, 0};
 
 	std::vector<const char *> requiredDeviceExtension = {
 		vk::KHRSwapchainExtensionName};
@@ -160,6 +167,7 @@ private:
 		createGraphicsPipeline();
 		createCommandPool();
 		createVertexBuffer();
+		createIndexBuffer();
 		createCommandBuffers();
 		createSyncObjects();
 	}
@@ -291,22 +299,38 @@ private:
 	void createVertexBuffer()
 	{
 		vk::DeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
-		// create temp variable from where to save the staging buffer, create it with the function
-		vk::raii::Buffer stagingBuffer(nullptr);
-		vk::raii::DeviceMemory stagingBufferMemory(nullptr);
+		vk::raii::Buffer stagingBuffer({});
+		vk::raii::DeviceMemory stagingBufferMemory({});
 
 		createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, stagingBuffer, stagingBufferMemory);
 
-		void* data = stagingBufferMemory.mapMemory(0, bufferSize);
+		void *data = stagingBufferMemory.mapMemory(0, bufferSize);
 		memcpy(data, vertices.data(), bufferSize);
 		stagingBufferMemory.unmapMemory();
 
-		createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eVertexBuffer,  vk::MemoryPropertyFlagBits::eDeviceLocal, vertexBuffer, vertexBufferMemory);
-		
+		createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eVertexBuffer, vk::MemoryPropertyFlagBits::eDeviceLocal, vertexBuffer, vertexBufferMemory);
+
 		copyBuffer(stagingBuffer, vertexBuffer, bufferSize);
 	}
 
-	void createBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage, vk::MemoryPropertyFlags properties, vk::raii::Buffer& buffer, vk::raii::DeviceMemory &bufferMemory)
+	void createIndexBuffer()
+	{
+		vk::DeviceSize bufferSize = sizeof(indices[0]) * indices.size();
+		vk::raii::Buffer stagingBuffer({});
+		vk::raii::DeviceMemory stagingBufferMemory({});
+
+		createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, stagingBuffer, stagingBufferMemory);
+
+		void *data = stagingBufferMemory.mapMemory(0, bufferSize);
+		memcpy(data, indices.data(), (size_t)bufferSize);
+		stagingBufferMemory.unmapMemory();
+
+		createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eIndexBuffer, vk::MemoryPropertyFlagBits::eDeviceLocal, indexBuffer, indexBufferMemory);
+
+		copyBuffer(stagingBuffer, indexBuffer, bufferSize);
+	}
+
+	void createBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage, vk::MemoryPropertyFlags properties, vk::raii::Buffer &buffer, vk::raii::DeviceMemory &bufferMemory)
 	{
 		vk::BufferCreateInfo bufferInfo{
 			.size = size,
@@ -320,9 +344,10 @@ private:
 		buffer.bindMemory(*bufferMemory, 0);
 	}
 
-	void copyBuffer(vk::raii::Buffer &srcBuffer, vk::raii::Buffer &dstBuffer, vk::DeviceSize size){
-				vk::CommandBufferAllocateInfo allocInfo{.commandPool = commandPool, .level = vk::CommandBufferLevel::ePrimary, .commandBufferCount = 1};
-		vk::raii::CommandBuffer       commandCopyBuffer = std::move(device.allocateCommandBuffers(allocInfo).front());
+	void copyBuffer(vk::raii::Buffer &srcBuffer, vk::raii::Buffer &dstBuffer, vk::DeviceSize size)
+	{
+		vk::CommandBufferAllocateInfo allocInfo{.commandPool = commandPool, .level = vk::CommandBufferLevel::ePrimary, .commandBufferCount = 1};
+		vk::raii::CommandBuffer commandCopyBuffer = std::move(device.allocateCommandBuffers(allocInfo).front());
 		commandCopyBuffer.begin(vk::CommandBufferBeginInfo{.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
 		commandCopyBuffer.copyBuffer(*srcBuffer, *dstBuffer, vk::BufferCopy(0, 0, size));
 		commandCopyBuffer.end();
@@ -386,6 +411,7 @@ private:
 								   *graphicsPipeline);
 
 		commandBuffer.bindVertexBuffers(0, *vertexBuffer, {0});
+		commandBuffer.bindIndexBuffer(*indexBuffer, 0, vk::IndexType::eUint16);
 		// Set dynamic viewport and scissor
 		commandBuffer.setViewport(
 			0,
@@ -395,7 +421,7 @@ private:
 								 vk::Rect2D{vk::Offset2D{0, 0}, swapChainExtent});
 
 		// Draw the triangle
-		commandBuffer.draw(3, 1, 0, 0);
+		commandBuffer.drawIndexed(indices.size(), 1, 0, 0, 0);
 
 		// End rendering
 		commandBuffer.endRendering();
