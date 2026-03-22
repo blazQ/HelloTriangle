@@ -290,19 +290,25 @@ private:
 
 	void createVertexBuffer()
 	{
+		vk::DeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
+		createBuffer(bufferSize, vk::BufferUsageFlagBits::eVertexBuffer, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, vertexBuffer, vertexBufferMemory);
+		void *data = vertexBufferMemory.mapMemory(0, bufferSize);
+		memcpy(data, vertices.data(), (size_t) bufferSize);
+		vertexBufferMemory.unmapMemory();
+	}
+
+	void createBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage, vk::MemoryPropertyFlags properties, vk::raii::Buffer& buffer, vk::raii::DeviceMemory &bufferMemory)
+	{
 		vk::BufferCreateInfo bufferInfo{
-			.size = sizeof(vertices[0]) * vertices.size(),
-			.usage = vk::BufferUsageFlagBits::eVertexBuffer,
+			.size = size,
+			.usage = usage,
 			.sharingMode = vk::SharingMode::eExclusive};
-		vertexBuffer = vk::raii::Buffer(device, bufferInfo);
+		buffer = vk::raii::Buffer(device, bufferInfo);
 		vk::MemoryRequirements memRequirements =
 			vertexBuffer.getMemoryRequirements();
-		vk::MemoryAllocateInfo memoryAllocateInfo{.allocationSize = memRequirements.size, .memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent)};
-		vertexBufferMemory = vk::raii::DeviceMemory(device, memoryAllocateInfo);
-		vertexBuffer.bindMemory(*vertexBufferMemory, 0);
-		void *data = vertexBufferMemory.mapMemory(0, bufferInfo.size);
-		memcpy(data, vertices.data(), bufferInfo.size);
-		vertexBufferMemory.unmapMemory();
+		vk::MemoryAllocateInfo memoryAllocateInfo{.allocationSize = memRequirements.size, .memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties)};
+		bufferMemory = vk::raii::DeviceMemory(device, memoryAllocateInfo);
+		buffer.bindMemory(*bufferMemory, 0);
 	}
 
 	uint32_t findMemoryType(uint32_t typeFilter,

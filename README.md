@@ -22,7 +22,14 @@ I'll eventually clean up this readme, but for the time being relevant notes on t
 
 The Slang shared libraries (`libslang-compiler.so` etc.) must be on the system library path. If you installed `slangc` manually and only copied the binary, copy the accompanying `.so` files to `/usr/local/lib/` and run `sudo ldconfig`.
 
-### Compile
+### Compile and run
+You can simply:
+```bash
+chmod +x ./run.sh
+./run.sh
+```
+
+If you want to explictly replicate what the run script does:
 
 ```bash
 cmake -S . -B _build
