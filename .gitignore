@@ -10,6 +10,7 @@ _deps/
 install_manifest.txt
 
 # Build output directories
+_build/
 build/
 out/
 bin/

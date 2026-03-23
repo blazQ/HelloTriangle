@@ -17,29 +17,31 @@ I'll eventually clean up this readme, but for the time being relevant notes on t
 
 - CMake 3.29+
 - Vulkan SDK 1.4.335+
-- GLFW3, GLM
+- GLFW3, GLM, STB
 - `slangc` (Slang shader compiler)
 
 The Slang shared libraries (`libslang-compiler.so` etc.) must be on the system library path. If you installed `slangc` manually and only copied the binary, copy the accompanying `.so` files to `/usr/local/lib/` and run `sudo ldconfig`.
 
 ### Compile and run
-You can simply:
+
 ```bash
-chmod +x ./run.sh
 ./run.sh
 ```
 
-If you want to explictly replicate what the run script does:
+### What the run script does (step by step)
 
 ```bash
+# 1. Configure: reads CMakeLists.txt, generates build files in _build/,
+#    and copies textures/ into _build/textures/
 cmake -S . -B _build
+
+# 2. Build: compiles shaders (shader.slang -> _build/shaders/slang.spv)
+#    and compiles the C++ executable to _build/main
 cmake --build _build
-```
 
-The executable will be at `_build/main/main`. Run it from that directory so the relative shader paths resolve:
-
-```bash
-cd _build/main && ./main
+# 3. Run from _build/ so that relative paths in the code
+#    ("shaders/slang.spv", "textures/texture.jpg") resolve correctly
+cd _build && ./main
 ```
 
 ---
