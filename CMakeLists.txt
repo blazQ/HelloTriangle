@@ -58,13 +58,22 @@ add_custom_target(shaders DEPENDS ${CMAKE_BINARY_DIR}/shaders/slang.spv)
 file(COPY ${CMAKE_SOURCE_DIR}/textures DESTINATION ${CMAKE_BINARY_DIR})
 file(COPY ${CMAKE_SOURCE_DIR}/models DESTINATION ${CMAKE_BINARY_DIR})
 
-add_executable(main main.cpp)
+set(IMGUI_DIR ${CMAKE_SOURCE_DIR}/extern/imgui)
+
+add_executable(main main.cpp
+    ${IMGUI_DIR}/imgui.cpp
+    ${IMGUI_DIR}/imgui_draw.cpp
+    ${IMGUI_DIR}/imgui_tables.cpp
+    ${IMGUI_DIR}/imgui_widgets.cpp
+    ${IMGUI_DIR}/backends/imgui_impl_glfw.cpp
+    ${IMGUI_DIR}/backends/imgui_impl_vulkan.cpp
+)
 set_target_properties(main PROPERTIES
     CXX_STANDARD 20
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 target_link_libraries(main PRIVATE Vulkan::cppm glfw)
-target_include_directories(main PRIVATE ${STB_INCLUDEDIR} ${TINYOBJ_INCLUDEDIR})
+target_include_directories(main PRIVATE ${STB_INCLUDEDIR} ${TINYOBJ_INCLUDEDIR} ${IMGUI_DIR} ${IMGUI_DIR}/backends)
 target_compile_definitions(main PRIVATE VULKAN_HPP_HANDLE_ERROR_OUT_OF_DATE_AS_SUCCESS)
 add_dependencies(main shaders)
 

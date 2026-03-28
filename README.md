@@ -22,21 +22,37 @@ I'll eventually clean up this readme, but for the time being relevant notes on t
 
 The Slang shared libraries (`libslang-compiler.so` etc.) must be on the system library path. If you installed `slangc` manually and only copied the binary, copy the accompanying `.so` files to `/usr/local/lib/` and run `sudo ldconfig`.
 
+### Clone
+
+This repository uses git submodules (Dear ImGui). Clone with:
+
+```bash
+git clone --recurse-submodules <repo-url>
+```
+
+If you already cloned without submodules:
+
+```bash
+git submodule update --init
+```
+
 ### Compile and run
 
 ```bash
-./run.sh
+./run.sh              # debug build (default, validation layers active)
+./run.sh release      # release build (optimized, no validation)
+./run.sh relwithdebinfo  # optimized + debug symbols + validation
 ```
 
 ### What the run script does (step by step)
 
 ```bash
 # 1. Configure: reads CMakeLists.txt, generates build files in _build/,
-#    and copies textures/ into _build/textures/
-cmake -S . -B _build
+#    copies textures/ and models/ into _build/
+cmake -S . -B _build -DCMAKE_BUILD_TYPE=<build-type>
 
-# 2. Build: compiles shaders (shader.slang -> _build/shaders/slang.spv)
-#    and compiles the C++ executable to _build/main
+# 2. Build: compiles shaders (shader.slang -> _build/shaders/slang.spv),
+#    compiles ImGui sources and the C++ executable to _build/main
 cmake --build _build
 
 # 3. Run from _build/ so that relative paths in the code

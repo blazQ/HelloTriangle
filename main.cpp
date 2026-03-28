@@ -11,6 +11,10 @@
 #include <stdexcept>
 #include <vector>
 
+#include "imgui.h"
+#include "imgui_impl_glfw.h"
+#include "imgui_impl_vulkan.h"
+
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -104,6 +108,7 @@ public:
 	{
 		initWindow();
 		initVulkan();
+		imGuiInit();
 		mainLoop();
 		cleanup();
 	}
@@ -143,6 +148,8 @@ private:
 	vk::raii::DescriptorSetLayout descriptorSetLayout = nullptr;
 	vk::raii::PipelineLayout pipelineLayout = nullptr;
 	vk::raii::Pipeline graphicsPipeline = nullptr;
+
+	vk::PresentModeKHR presentMode;
 
 	// --- Command recording ---
 	// One pool owns the memory; one command buffer per frame in flight.
@@ -213,6 +220,8 @@ private:
 		glm::mat4 proj;
 	};
 
+	vk::raii::DescriptorPool imguiDescriptorPool = nullptr;
+
 	// =========================================================================
 	// SECTION 1: WINDOW
 	// Creates the OS window and registers a resize callback so we know when to
@@ -224,7 +233,7 @@ private:
 		glfwInit();
 
 		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-		glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE); /* TODO: Make it optional*/
+		// glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE); /* TODO: Make it optional*/
 
 		window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan", nullptr, nullptr);
 		glfwSetWindowUserPointer(window, this);
@@ -613,7 +622,7 @@ private:
 
 		std::vector<vk::PresentModeKHR> availablePresentModes =
 			physicalDevice.getSurfacePresentModesKHR(*surface);
-		vk::PresentModeKHR presentMode =
+		presentMode =
 			chooseSwapPresentMode(availablePresentModes);
 
 		vk::SwapchainCreateInfoKHR swapChainCreateInfo{
@@ -1632,6 +1641,19 @@ private:
 
 		commandBuffers[frameIndex].reset();
 
+		ImGui_ImplVulkan_NewFrame();
+		ImGui_ImplGlfw_NewFrame();
+		ImGui::NewFrame();
+
+		ImGui::Begin("Info");
+		ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
+		ImGui::Text("Frame time: %.3f ms", 1000.0f / ImGui::GetIO().Framerate);
+		ImGui::Text("Present mode: %s", vk::to_string(presentMode).c_str());
+
+		ImGui::End();
+
+		ImGui::Render();
+
 		// Record the next rendering command
 		recordCommandBuffer(imageIndex);
 
@@ -1830,6 +1852,23 @@ private:
 		// End rendering
 		commandBuffer.endRendering();
 
+		// second pass: ImGui renders directly into swapchain image
+		vk::RenderingAttachmentInfo imguiColorAttachment{
+			.imageView = *swapChainImageViews[imageIndex],
+			.imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+			.loadOp = vk::AttachmentLoadOp::eLoad, // load, don't clear — preserve your scene
+			.storeOp = vk::AttachmentStoreOp::eStore};
+
+		vk::RenderingInfo imguiRenderingInfo{
+			.renderArea = {vk::Offset2D{0, 0}, swapChainExtent},
+			.layerCount = 1,
+			.colorAttachmentCount = 1,
+			.pColorAttachments = &imguiColorAttachment};
+
+		commandBuffer.beginRendering(imguiRenderingInfo);
+		ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), *commandBuffer);
+		commandBuffer.endRendering();
+
 		// Transition image back to present source after rendering
 		transition_image_layout(
 			swapChainImages[imageIndex], vk::ImageLayout::eColorAttachmentOptimal,
@@ -1927,6 +1966,9 @@ private:
 	{
 		cleanupSwapChain();
 
+		ImGui_ImplVulkan_Shutdown();
+		ImGui_ImplGlfw_Shutdown();
+		ImGui::DestroyContext();
 		inFlightFences.clear();
 		renderFinishedSemaphores.clear();
 		presentCompleteSemaphores.clear();
@@ -1940,6 +1982,7 @@ private:
 		textureImageMemory = nullptr;
 		descriptorSets.clear();
 		descriptorPool = nullptr;
+		imguiDescriptorPool = nullptr;
 		uniformBuffers.clear();
 		uniformBuffersMemory.clear();
 		indexBuffer = nullptr;
@@ -1955,6 +1998,45 @@ private:
 
 		glfwDestroyWindow(window);
 		glfwTerminate();
+	}
+
+	void imGuiInit()
+	{
+		// ImGui needs its own descriptor pool
+		vk::DescriptorPoolSize pool_size(vk::DescriptorType::eCombinedImageSampler, 1);
+		vk::DescriptorPoolCreateInfo pool_info = {
+			.sType = vk::StructureType::eDescriptorPoolCreateInfo,
+			.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
+			.maxSets = 1,
+			.poolSizeCount = 1,
+			.pPoolSizes = &pool_size};
+		imguiDescriptorPool = vk::raii::DescriptorPool(
+			device, pool_info);
+
+		IMGUI_CHECKVERSION();
+		ImGui::CreateContext();
+		float xscale, yscale;
+		glfwGetWindowContentScale(window, &xscale, &yscale);
+		ImGui::GetIO().Fonts->AddFontDefault();
+		ImGui::GetStyle().ScaleAllSizes(xscale);
+		ImGui_ImplGlfw_InitForVulkan(window, true);
+
+		ImGui_ImplVulkan_InitInfo init_info = {};
+		init_info.Instance = *instance;
+		init_info.PhysicalDevice = *physicalDevice;
+		init_info.Device = *device;
+		init_info.Queue = *queue;
+		init_info.DescriptorPool = *imguiDescriptorPool;
+		init_info.MinImageCount = 2;
+		init_info.ImageCount = swapChainImages.size();
+
+		init_info.UseDynamicRendering = true;
+		init_info.PipelineInfoMain.PipelineRenderingCreateInfo = {
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR,
+			.colorAttachmentCount = 1,
+			.pColorAttachmentFormats = (VkFormat *)&swapChainSurfaceFormat.format};
+		init_info.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+		ImGui_ImplVulkan_Init(&init_info);
 	}
 };
 
