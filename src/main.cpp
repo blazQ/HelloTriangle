@@ -35,6 +35,9 @@ results in faster compile times.
 import vulkan_hpp;
 #endif
 
+#include "Device.hpp"
+#include "Swapchain.hpp"
+
 /* This block is necessary because Vulkan itself is not aware of platform
 specific components, like the OS Windowing System. Vulkan knows about abstract
 concepts, like a VkSurface, but has no idea how to create one in Windows, MacOS
@@ -62,18 +65,6 @@ const std::string TEXTURE_PATH = "textures/viking_room.png";
 being idle while the GPU renders frame N. By having multiple frames in flight,
 while the CPU records commands for frame N+1, the GPU renders frame N.*/
 constexpr int MAX_FRAMES_IN_FLIGHT = 2;
-
-/* Validation layers are explained in the notes/hello_triangle.md section. */
-const std::vector<char const *> validationLayers = {
-	"VK_LAYER_KHRONOS_validation"};
-
-/* Uses a standard C macro automatically defined by the build system to disable
- * validation layers when compiling in Release mode. */
-#ifdef NDEBUG
-constexpr bool enableValidationLayers = false;
-#else
-constexpr bool enableValidationLayers = true;
-#endif
 
 // Per-vertex data sent to the vertex shader. The GPU reads this from the vertex
 // buffer and it describes the layout of each vertex in memory.
@@ -123,24 +114,13 @@ private:
 	bool framebufferResized = false;
 
 	// --- Vulkan core objects ---
-	// Context -> Instance -> DebugMessenger -> Surface -> PhysicalDevice ->
-	// Device -> Queue. Each one depends on the previous.
-	vk::raii::Context context;
-	vk::raii::Instance instance = nullptr;
-	vk::raii::DebugUtilsMessengerEXT debugMessenger = nullptr;
-	vk::raii::SurfaceKHR surface = nullptr;
-	vk::raii::PhysicalDevice physicalDevice = nullptr;
-	vk::raii::Device device = nullptr;
-	vk::raii::Queue queue = nullptr;
-	uint32_t graphicsIndex = ~0;
+	// Owns Context → Instance → DebugMessenger → Surface → PhysicalDevice →
+	// Device → Queue. Constructed in initVulkan, destroyed last in cleanup.
+	std::unique_ptr<Device> vulkanDevice;
 
 	// --- Swapchain ---
 	// The swapchain is a ring buffer of images we render into and present.
-	vk::raii::SwapchainKHR swapChain = nullptr;
-	std::vector<vk::Image> swapChainImages;
-	vk::SurfaceFormatKHR swapChainSurfaceFormat;
-	vk::Extent2D swapChainExtent;
-	std::vector<vk::raii::ImageView> swapChainImageViews;
+	std::unique_ptr<Swapchain> swapchain;
 
 	// --- Graphics pipeline ---
 	// The pipeline encodes the full state of the GPU rendering stages: shaders,
@@ -149,7 +129,6 @@ private:
 	vk::raii::PipelineLayout pipelineLayout = nullptr;
 	vk::raii::Pipeline graphicsPipeline = nullptr;
 
-	vk::PresentModeKHR presentMode;
 	vk::PresentModeKHR pendingPresentMode = vk::PresentModeKHR::eMailbox;
 
 	// --- Command recording ---
@@ -161,10 +140,11 @@ private:
 	// --- Render attachments (recreated alongside the swapchain on resize) ---
 	// MSAA: we render into a multisampled color image and resolve into the
 	// swapchain image. The depth image tests fragment depth for occlusion.
+	// msaaSamples: currently active count. pendingMsaaSamples: user-requested
+	// change (applied at the start of the next frame). max and supported counts
+	// are queried from vulkanDevice.
 	vk::SampleCountFlagBits msaaSamples = vk::SampleCountFlagBits::e1;
-	vk::SampleCountFlagBits maxMsaaSamples = vk::SampleCountFlagBits::e1;
 	vk::SampleCountFlagBits pendingMsaaSamples = vk::SampleCountFlagBits::e1;
-	vk::SampleCountFlags supportedMsaaSamples;
 	vk::raii::Image colorImage = nullptr;
 	vk::raii::DeviceMemory colorImageMemory = nullptr;
 	vk::raii::ImageView colorImageView = nullptr;
@@ -213,10 +193,6 @@ private:
 	std::vector<vk::raii::Semaphore> renderFinishedSemaphores;
 	std::vector<vk::raii::Fence> inFlightFences;
 
-	// --- Configuration ---
-	std::vector<const char *> requiredDeviceExtension = {
-		vk::KHRSwapchainExtensionName};
-
 	// Data layout of the uniform buffer as the shader sees it.
 	struct UniformBufferObject
 	{
@@ -256,25 +232,20 @@ private:
 		app->framebufferResized = true;
 	}
 
-	// =========================================================================
-	// SECTION 2: VULKAN BOOTSTRAP (Instance → Debug → Surface)
-	// The Vulkan instance is the connection between the application and the
-	// Vulkan library. The debug messenger routes validation messages to our
-	// callback. The surface is the abstract handle to the OS window's
-	// presentation target.
-	// =========================================================================
-
-	// initVulkan is the master initialization sequence. Reading it top-to-bottom
-	// gives the full picture of what gets created and in what order.
 	void initVulkan()
 	{
-		createInstance();
-		setupDebugMessenger();
-		createSurface();
-		pickPhysicalDevice();
-		createLogicalDevice();
-		createSwapChain();
-		createImageViews();
+#ifdef NDEBUG
+		std::vector<const char *> layers = {};
+#else
+		std::vector<const char *> layers = {"VK_LAYER_KHRONOS_validation"};
+#endif
+		vulkanDevice = std::make_unique<Device>(
+			window,
+			std::vector<const char *>{vk::KHRSwapchainExtensionName},
+			layers);
+		msaaSamples = vulkanDevice->getMsaaSamples();
+		pendingMsaaSamples = msaaSamples;
+		swapchain = std::make_unique<Swapchain>(*vulkanDevice, window, pendingPresentMode);
 		createDescriptorSetLayout();
 		createGraphicsPipeline();
 		createCommandPool();
@@ -291,465 +262,6 @@ private:
 		createDescriptorSets();
 		createCommandBuffers();
 		createSyncObjects();
-	}
-
-	// Builds the VkInstance: declares which Vulkan version, layers (validation),
-	// and instance-level extensions (e.g. surface, debug utils) we need.
-	void createInstance()
-	{
-		constexpr vk::ApplicationInfo appInfo{
-			.pApplicationName = "Hello Triangle",
-			.applicationVersion = VK_MAKE_VERSION(1, 0, 0),
-			.pEngineName = "No Engine",
-			.engineVersion = VK_MAKE_VERSION(1, 0, 0),
-			.apiVersion = vk::ApiVersion14};
-
-		// Get the required layers
-		std::vector<char const *> requiredLayers;
-		if (enableValidationLayers)
-		{
-			requiredLayers.assign(validationLayers.begin(), validationLayers.end());
-		}
-
-		// Check if the required layers are supported by the Vulkan implementation.
-		auto layerProperties = context.enumerateInstanceLayerProperties();
-		auto unsupportedLayerIt = std::ranges::find_if(
-			requiredLayers, [&layerProperties](auto const &requiredLayer)
-			{ return std::ranges::none_of(
-				  layerProperties, [requiredLayer](auto const &layerProperty)
-				  { return strcmp(layerProperty.layerName, requiredLayer) == 0; }); });
-		if (unsupportedLayerIt != requiredLayers.end())
-		{
-			throw std::runtime_error("Required layer not supported: " +
-									 std::string(*unsupportedLayerIt));
-		}
-
-		// Get the required extensions.
-		auto requiredExtensions = getRequiredInstanceExtensions();
-
-		// Check if the required extensions are supported by the Vulkan
-		// implementation.
-		auto extensionProperties = context.enumerateInstanceExtensionProperties();
-		auto unsupportedPropertyIt = std::ranges::find_if(
-			requiredExtensions,
-			[&extensionProperties](auto const &requiredExtension)
-			{
-				return std::ranges::none_of(
-					extensionProperties,
-					[requiredExtension](auto const &extensionProperty)
-					{
-						return strcmp(extensionProperty.extensionName,
-									  requiredExtension) == 0;
-					});
-			});
-		if (unsupportedPropertyIt != requiredExtensions.end())
-		{
-			throw std::runtime_error("Required extension not supported: " +
-									 std::string(*unsupportedPropertyIt));
-		}
-
-		vk::InstanceCreateInfo createInfo{
-			.pApplicationInfo = &appInfo,
-			.enabledLayerCount = static_cast<uint32_t>(requiredLayers.size()),
-			.ppEnabledLayerNames = requiredLayers.data(),
-			.enabledExtensionCount =
-				static_cast<uint32_t>(requiredExtensions.size()),
-			.ppEnabledExtensionNames = requiredExtensions.data()};
-		instance = vk::raii::Instance(context, createInfo);
-	}
-
-	// Returns the list of instance extensions we need. GLFW tells us which
-	// platform surface extension it needs; we add the debug utils on top when
-	// validation is enabled.
-	std::vector<const char *> getRequiredInstanceExtensions()
-	{
-		uint32_t glfwExtensionCount = 0;
-		auto glfwExtensions =
-			glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
-
-		std::vector extensions(glfwExtensions, glfwExtensions + glfwExtensionCount);
-		if (enableValidationLayers)
-		{
-			extensions.push_back(vk::EXTDebugUtilsExtensionName);
-		}
-
-		return extensions;
-	}
-
-	// Vulkan calls this whenever the validation layer has a message to report.
-	// We only print warnings and errors to avoid spam.
-	static VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallback(
-		vk::DebugUtilsMessageSeverityFlagBitsEXT severity,
-		vk::DebugUtilsMessageTypeFlagsEXT type,
-		const vk::DebugUtilsMessengerCallbackDataEXT *pCallbackData, void *)
-	{
-		if (severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eError ||
-			severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning)
-		{
-			std::cerr << "validation layer: type " << to_string(type)
-					  << " msg: " << pCallbackData->pMessage << std::endl;
-		}
-
-		return vk::False;
-	}
-
-	// Registers our debugCallback with Vulkan so validation messages are routed
-	// to it. No-op in Release builds.
-	void setupDebugMessenger()
-	{
-		if (!enableValidationLayers)
-			return;
-
-		vk::DebugUtilsMessageSeverityFlagsEXT severityFlags(
-			vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose |
-			vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning |
-			vk::DebugUtilsMessageSeverityFlagBitsEXT::eError);
-		vk::DebugUtilsMessageTypeFlagsEXT messageTypeFlags(
-			vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral |
-			vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance |
-			vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation);
-		vk::DebugUtilsMessengerCreateInfoEXT debugUtilsMessengerCreateInfoEXT{
-			.messageSeverity = severityFlags,
-			.messageType = messageTypeFlags,
-			.pfnUserCallback = &debugCallback};
-		debugMessenger =
-			instance.createDebugUtilsMessengerEXT(debugUtilsMessengerCreateInfoEXT);
-	}
-
-	// Creates the Vulkan surface by asking GLFW to bridge to the platform's
-	// native windowing API (Win32, Xlib, Wayland, etc.).
-	void createSurface()
-	{
-		VkSurfaceKHR _surface;
-		if (glfwCreateWindowSurface(*instance, window, nullptr, &_surface) != 0)
-		{
-			throw std::runtime_error("failed to create window surface!");
-		}
-		surface = vk::raii::SurfaceKHR(instance, _surface);
-	}
-
-	// =========================================================================
-	// SECTION 3: PHYSICAL & LOGICAL DEVICE
-	// The physical device is the GPU; we pick one that meets our requirements.
-	// The logical device is our handle to the chosen GPU: we also retrieve the
-	// queue we'll use to submit rendering commands.
-	// =========================================================================
-
-	// Iterates all available GPUs and picks the first one that passes
-	// isDeviceSuitable(). Also determines the highest supported MSAA sample
-	// count at this point.
-	void pickPhysicalDevice()
-	{
-		std::vector<vk::raii::PhysicalDevice> physicalDevices =
-			instance.enumeratePhysicalDevices();
-		for (const auto &device : physicalDevices)
-		{
-			if (isDeviceSuitable(device))
-			{
-				physicalDevice = device;
-				msaaSamples = getMaxUsableSampleCount();
-				maxMsaaSamples = msaaSamples;
-				pendingMsaaSamples = msaaSamples;
-				break;
-			}
-		}
-		if (physicalDevice == nullptr)
-		{
-			throw std::runtime_error("failed to find a suitable GPU!");
-		}
-	}
-
-	// Checks that the candidate GPU supports: Vulkan 1.3, a graphics queue,
-	// the required device extensions (swapchain), and the features we use
-	// (dynamic rendering, extended dynamic state).
-	bool isDeviceSuitable(vk::raii::PhysicalDevice const &physicalDevice)
-	{
-		// Check if the device is a discrete GPU.
-		bool isDiscreteGPU = physicalDevice.getProperties().deviceType ==
-							 vk::PhysicalDeviceType::eDiscreteGpu;
-
-		// Check if the physicalDevice supports the Vulkan 1.3 API version
-		bool supportsVulkan1_3 =
-			physicalDevice.getProperties().apiVersion >= VK_API_VERSION_1_3;
-
-		// Check if any of the queue families support graphics operations
-		auto queueFamilies = physicalDevice.getQueueFamilyProperties();
-		bool supportsGraphics =
-			std::ranges::any_of(queueFamilies, [](auto const &qfp)
-								{ return !!(qfp.queueFlags & vk::QueueFlagBits::eGraphics); });
-
-		// Check if all required physicalDevice extensions are available
-		auto availableDeviceExtensions =
-			physicalDevice.enumerateDeviceExtensionProperties();
-		bool supportsAllRequiredExtensions = std::ranges::all_of(
-			requiredDeviceExtension,
-			[&availableDeviceExtensions](auto const &requiredDeviceExtension)
-			{
-				return std::ranges::any_of(
-					availableDeviceExtensions,
-					[requiredDeviceExtension](auto const &availableDeviceExtension)
-					{
-						return strcmp(availableDeviceExtension.extensionName,
-									  requiredDeviceExtension) == 0;
-					});
-			});
-
-		// Check if the physicalDevice supports the required features
-		auto features = physicalDevice.template getFeatures2<
-			vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan13Features,
-			vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
-		bool supportsRequiredFeatures =
-			features.template get<vk::PhysicalDeviceVulkan13Features>()
-				.dynamicRendering &&
-			features
-				.template get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>()
-				.extendedDynamicState;
-
-		// Return true if the physicalDevice meets all the criteria
-		return supportsVulkan1_3 && supportsGraphics &&
-			   supportsAllRequiredExtensions && supportsRequiredFeatures &&
-			   isDiscreteGPU;
-	}
-
-	// Queries the GPU for the highest sample count supported by both the color
-	// and depth framebuffers. Used to set msaaSamples.
-	vk::SampleCountFlagBits getMaxUsableSampleCount()
-	{
-		vk::PhysicalDeviceProperties physicalDeviceProperties =
-			physicalDevice.getProperties();
-
-		vk::SampleCountFlags counts =
-			physicalDeviceProperties.limits.framebufferColorSampleCounts &
-			physicalDeviceProperties.limits.framebufferDepthSampleCounts;
-		supportedMsaaSamples = counts;
-		if (counts & vk::SampleCountFlagBits::e64)
-		{
-			return vk::SampleCountFlagBits::e64;
-		}
-		if (counts & vk::SampleCountFlagBits::e32)
-		{
-			return vk::SampleCountFlagBits::e32;
-		}
-		if (counts & vk::SampleCountFlagBits::e16)
-		{
-			return vk::SampleCountFlagBits::e16;
-		}
-		if (counts & vk::SampleCountFlagBits::e8)
-		{
-			return vk::SampleCountFlagBits::e8;
-		}
-		if (counts & vk::SampleCountFlagBits::e4)
-		{
-			return vk::SampleCountFlagBits::e4;
-		}
-		if (counts & vk::SampleCountFlagBits::e2)
-		{
-			return vk::SampleCountFlagBits::e2;
-		}
-
-		return vk::SampleCountFlagBits::e1;
-	}
-
-	// Creates the logical device (our interface to the GPU) by requesting the
-	// queue family that supports both graphics and present, and enabling the
-	// specific Vulkan features we depend on.
-	void createLogicalDevice()
-	{
-		std::vector<vk::QueueFamilyProperties> queueFamilyProperties =
-			physicalDevice.getQueueFamilyProperties();
-
-		// get the first index into queueFamilyProperties which supports both
-		// graphics and present
-		uint32_t queueIndex = ~0;
-		for (uint32_t qfpIndex = 0; qfpIndex < queueFamilyProperties.size();
-			 qfpIndex++)
-		{
-			if ((queueFamilyProperties[qfpIndex].queueFlags &
-				 vk::QueueFlagBits::eGraphics) &&
-				physicalDevice.getSurfaceSupportKHR(qfpIndex, *surface))
-			{
-				// found a queue family that supports both graphics and present
-				queueIndex = qfpIndex;
-				break;
-			}
-		}
-		if (queueIndex == ~0)
-		{
-			throw std::runtime_error(
-				"Could not find a queue for graphics and present -> terminating");
-		}
-
-		graphicsIndex = queueIndex;
-
-		// query for Vulkan 1.3 features
-		vk::StructureChain<vk::PhysicalDeviceFeatures2,
-						   vk::PhysicalDeviceVulkan11Features,
-						   vk::PhysicalDeviceVulkan13Features,
-						   vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>
-			featureChain = {
-				{.features = {.samplerAnisotropy =
-								  true}}, // vk::PhysicalDeviceFeatures2
-				{.shaderDrawParameters =
-					 true}, // vk::PhysicalDeviceVulkan11Features
-				{.synchronization2 = true,
-				 .dynamicRendering = true}, // vk::PhysicalDeviceVulkan13Features
-				{.extendedDynamicState =
-					 true} // vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT
-			};
-
-		// create a Device
-		float queuePriority = 0.5f;
-		vk::DeviceQueueCreateInfo deviceQueueCreateInfo{
-			.queueFamilyIndex = queueIndex,
-			.queueCount = 1,
-			.pQueuePriorities = &queuePriority};
-		vk::DeviceCreateInfo deviceCreateInfo{
-			.pNext = &featureChain.get<vk::PhysicalDeviceFeatures2>(),
-			.queueCreateInfoCount = 1,
-			.pQueueCreateInfos = &deviceQueueCreateInfo,
-			.enabledExtensionCount =
-				static_cast<uint32_t>(requiredDeviceExtension.size()),
-			.ppEnabledExtensionNames = requiredDeviceExtension.data()};
-
-		device = vk::raii::Device(physicalDevice, deviceCreateInfo);
-		queue = vk::raii::Queue(device, queueIndex, 0);
-	}
-
-	// =========================================================================
-	// SECTION 4: SWAPCHAIN
-	// The swapchain manages a pool of images we render into. After rendering,
-	// we "present" the image so the display shows it. We also create an
-	// ImageView for each swapchain image (a view into the image that tells
-	// Vulkan how to interpret it as a 2D color target).
-	// =========================================================================
-
-	// Queries the surface capabilities and formats, picks the best options, and
-	// creates the swapchain. On resize this is recreated via recreateSwapChain().
-	void createSwapChain()
-	{
-		vk::SurfaceCapabilitiesKHR surfaceCapabilities =
-			physicalDevice.getSurfaceCapabilitiesKHR(*surface);
-		swapChainExtent = chooseSwapExtent(surfaceCapabilities);
-		uint32_t minImageCount = chooseSwapMinImageCount(surfaceCapabilities);
-
-		std::vector<vk::SurfaceFormatKHR> availableFormats =
-			physicalDevice.getSurfaceFormatsKHR(*surface);
-		swapChainSurfaceFormat = chooseSwapSurfaceFormat(availableFormats);
-
-		std::vector<vk::PresentModeKHR> availablePresentModes =
-			physicalDevice.getSurfacePresentModesKHR(*surface);
-		if (!std::ranges::any_of(availablePresentModes, [this](auto m)
-								 { return m == pendingPresentMode; }))
-			pendingPresentMode = chooseSwapPresentMode(availablePresentModes);
-		presentMode = pendingPresentMode;
-
-		vk::SwapchainCreateInfoKHR swapChainCreateInfo{
-			.surface = *surface,
-			.minImageCount = minImageCount,
-			.imageFormat = swapChainSurfaceFormat.format,
-			.imageColorSpace = swapChainSurfaceFormat.colorSpace,
-			.imageExtent = swapChainExtent,
-			.imageArrayLayers = 1,
-			.imageUsage = vk::ImageUsageFlagBits::eColorAttachment,
-			.imageSharingMode = vk::SharingMode::eExclusive,
-			.preTransform = surfaceCapabilities.currentTransform,
-			.compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque,
-			.presentMode = presentMode,
-			.clipped = true};
-
-		swapChain = vk::raii::SwapchainKHR(device, swapChainCreateInfo);
-		swapChainImages = swapChain.getImages();
-	}
-
-	// Aims for 3 images (triple buffering). Falls back to the surface's maximum
-	// if the hardware doesn't support that many.
-	static uint32_t chooseSwapMinImageCount(
-		vk::SurfaceCapabilitiesKHR const &surfaceCapabilities)
-	{
-		auto minImageCount = std::max(3u, surfaceCapabilities.minImageCount);
-		if ((0 < surfaceCapabilities.maxImageCount) &&
-			(surfaceCapabilities.maxImageCount < minImageCount))
-		{
-			minImageCount = surfaceCapabilities.maxImageCount;
-		}
-		return minImageCount;
-	}
-
-	// Prefers B8G8R8A8_SRGB with sRGB color space. Falls back to the first
-	// available format if not found.
-	static vk::SurfaceFormatKHR chooseSwapSurfaceFormat(
-		std::vector<vk::SurfaceFormatKHR> const &availableFormats)
-	{
-		assert(!availableFormats.empty());
-		const auto formatIt =
-			std::ranges::find_if(availableFormats, [](const auto &format)
-								 { return format.format == vk::Format::eB8G8R8A8Srgb &&
-										  format.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear; });
-		return formatIt != availableFormats.end() ? *formatIt : availableFormats[0];
-	}
-
-	// Prefers Mailbox (renders as fast as possible, replaces queued frames
-	// without tearing). Falls back to FIFO (VSync), which is always guaranteed.
-	static vk::PresentModeKHR chooseSwapPresentMode(
-		std::vector<vk::PresentModeKHR> const &availablePresentModes)
-	{
-		assert(std::ranges::any_of(availablePresentModes, [](auto presentMode)
-								   { return presentMode == vk::PresentModeKHR::eFifo; }));
-		return std::ranges::any_of(availablePresentModes,
-								   [](const vk::PresentModeKHR value)
-								   {
-									   return vk::PresentModeKHR::eMailbox == value;
-								   })
-				   ? vk::PresentModeKHR::eMailbox
-				   : vk::PresentModeKHR::eFifo;
-	}
-
-	// Returns the swapchain extent matching the window's framebuffer size in
-	// pixels. Uses the surface's currentExtent when available; otherwise clamps
-	// the GLFW framebuffer size to the surface's min/max limits.
-	vk::Extent2D
-	chooseSwapExtent(vk::SurfaceCapabilitiesKHR const &capabilities)
-	{
-		if (capabilities.currentExtent.width !=
-			std::numeric_limits<uint32_t>::max())
-		{
-			return capabilities.currentExtent;
-		}
-		int width, height;
-		glfwGetFramebufferSize(window, &width, &height);
-
-		return {std::clamp<uint32_t>(width, capabilities.minImageExtent.width,
-									 capabilities.maxImageExtent.width),
-				std::clamp<uint32_t>(height, capabilities.minImageExtent.height,
-									 capabilities.maxImageExtent.height)};
-	}
-
-	// Creates one ImageView per swapchain image. An ImageView tells Vulkan how
-	// to interpret the raw image memory (format, aspect, mip range, etc.).
-	void createImageViews()
-	{
-		swapChainImageViews.reserve(swapChainImages.size());
-
-		for (uint32_t i = 0; i < swapChainImages.size(); i++)
-		{
-			swapChainImageViews.push_back(
-				createImageView(swapChainImages[i], swapChainSurfaceFormat.format,
-								vk::ImageAspectFlagBits::eColor, 1));
-		}
-	}
-
-	// Generic ImageView factory used for swapchain images, the texture, the
-	// depth image, and the MSAA color image.
-	vk::raii::ImageView createImageView(vk::Image image, vk::Format format,
-										vk::ImageAspectFlags aspectFlags,
-										uint32_t mipLevels)
-	{
-		vk::ImageViewCreateInfo viewInfo{
-			.image = image,
-			.viewType = vk::ImageViewType::e2D,
-			.format = format,
-			.subresourceRange = {aspectFlags, 0, mipLevels, 0, 1}};
-		return vk::raii::ImageView(device, viewInfo);
 	}
 
 	// =========================================================================
@@ -774,7 +286,7 @@ private:
 
 		vk::DescriptorSetLayoutCreateInfo layoutInfo{
 			.bindingCount = bindings.size(), .pBindings = bindings.data()};
-		descriptorSetLayout = vk::raii::DescriptorSetLayout(device, layoutInfo);
+		descriptorSetLayout = vk::raii::DescriptorSetLayout(vulkanDevice->getLogicalDevice(), layoutInfo);
 	}
 
 	// Assembles the full graphics pipeline by wiring together:
@@ -820,11 +332,11 @@ private:
 			.topology = vk::PrimitiveTopology::eTriangleList};
 		vk::Viewport viewport{.x = 0.0f,
 							  .y = 0.0f,
-							  .width = static_cast<float>(swapChainExtent.width),
-							  .height = static_cast<float>(swapChainExtent.height),
+							  .width = static_cast<float>(swapchain->getExtent().width),
+							  .height = static_cast<float>(swapchain->getExtent().height),
 							  .minDepth = 0.0f,
 							  .maxDepth = 1.0f};
-		vk::Rect2D scissor{.offset = vk::Offset2D{0, 0}, .extent = swapChainExtent};
+		vk::Rect2D scissor{.offset = vk::Offset2D{0, 0}, .extent = swapchain->getExtent()};
 		vk::PipelineViewportStateCreateInfo viewportState{.viewportCount = 1,
 														  .pViewports = &viewport,
 														  .scissorCount = 1,
@@ -857,7 +369,7 @@ private:
 			.pSetLayouts = &*descriptorSetLayout,
 			.pushConstantRangeCount = 0};
 
-		pipelineLayout = vk::raii::PipelineLayout(device, pipelineLayoutInfo);
+		pipelineLayout = vk::raii::PipelineLayout(vulkanDevice->getLogicalDevice(), pipelineLayoutInfo);
 		vk::Format depthFormat = findDepthFormat();
 		vk::PipelineDepthStencilStateCreateInfo depthStencil{
 			.depthTestEnable = vk::True,
@@ -867,7 +379,7 @@ private:
 			.stencilTestEnable = vk::False};
 		vk::PipelineRenderingCreateInfo pipelineRenderingCreateInfo{
 			.colorAttachmentCount = 1,
-			.pColorAttachmentFormats = &swapChainSurfaceFormat.format,
+			.pColorAttachmentFormats = &swapchain->getSurfaceFormat().format,
 			.depthAttachmentFormat = depthFormat};
 		vk::GraphicsPipelineCreateInfo pipelineInfo{
 			.pNext = &pipelineRenderingCreateInfo,
@@ -883,7 +395,7 @@ private:
 			.pDynamicState = &dynamicState,
 			.layout = pipelineLayout,
 			.renderPass = nullptr};
-		graphicsPipeline = vk::raii::Pipeline(device, nullptr, pipelineInfo);
+		graphicsPipeline = vk::raii::Pipeline(vulkanDevice->getLogicalDevice(), nullptr, pipelineInfo);
 	}
 
 	// Reads a binary file into a byte buffer. Used to load the SPIR-V shader.
@@ -911,7 +423,7 @@ private:
 		vk::ShaderModuleCreateInfo createInfo{
 			.codeSize = code.size() * sizeof(char),
 			.pCode = reinterpret_cast<const uint32_t *>(code.data())};
-		vk::raii::ShaderModule shaderModule{device, createInfo};
+		vk::raii::ShaderModule shaderModule{vulkanDevice->getLogicalDevice(), createInfo};
 		return shaderModule;
 	}
 
@@ -934,7 +446,7 @@ private:
 	{
 		for (const auto format : candidates)
 		{
-			vk::FormatProperties props = physicalDevice.getFormatProperties(format);
+			vk::FormatProperties props = vulkanDevice->getPhysicalDevice().getFormatProperties(format);
 			if (tiling == vk::ImageTiling::eLinear &&
 				(props.linearTilingFeatures & features) == features)
 			{
@@ -960,7 +472,7 @@ private:
 	// =========================================================================
 	// SECTION 6: COMMAND INFRASTRUCTURE
 	// Commands in Vulkan are not issued directly; they are recorded into command
-	// buffers and then submitted to a queue. The command pool is the allocator
+	// buffers and then submitted to a vulkanDevice->getGraphicsQueue(). The command pool is the allocator
 	// for these buffers — it is tied to a specific queue family.
 	// =========================================================================
 
@@ -971,8 +483,8 @@ private:
 	{
 		vk::CommandPoolCreateInfo poolInfo{
 			.flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
-			.queueFamilyIndex = graphicsIndex};
-		commandPool = vk::raii::CommandPool(device, poolInfo);
+			.queueFamilyIndex = vulkanDevice->getGraphicsIndex()};
+		commandPool = vk::raii::CommandPool(vulkanDevice->getLogicalDevice(), poolInfo);
 	}
 
 	// Allocates one primary command buffer per frame-in-flight slot. These are
@@ -985,7 +497,7 @@ private:
 			.level = vk::CommandBufferLevel::ePrimary,
 			.commandBufferCount = MAX_FRAMES_IN_FLIGHT};
 
-		commandBuffers = vk::raii::CommandBuffers(device, allocInfo);
+		commandBuffers = vk::raii::CommandBuffers(vulkanDevice->getLogicalDevice(), allocInfo);
 	}
 
 	// =========================================================================
@@ -1008,9 +520,9 @@ private:
 	// swapchain so the resolve step is a straight copy.
 	void createColorResources()
 	{
-		vk::Format colorFormat = swapChainSurfaceFormat.format;
+		vk::Format colorFormat = swapchain->getSurfaceFormat().format;
 
-		createImage(swapChainExtent.width, swapChainExtent.height, 1, msaaSamples,
+		createImage(swapchain->getExtent().width, swapchain->getExtent().height, 1, msaaSamples,
 					colorFormat, vk::ImageTiling::eOptimal,
 					vk::ImageUsageFlagBits::eTransientAttachment |
 						vk::ImageUsageFlagBits::eColorAttachment,
@@ -1026,7 +538,7 @@ private:
 	void createDepthResources()
 	{
 		vk::Format depthFormat = findDepthFormat();
-		createImage(swapChainExtent.width, swapChainExtent.height, 1, msaaSamples,
+		createImage(swapchain->getExtent().width, swapchain->getExtent().height, 1, msaaSamples,
 					depthFormat, vk::ImageTiling::eOptimal,
 					vk::ImageUsageFlagBits::eDepthStencilAttachment,
 					vk::MemoryPropertyFlagBits::eDeviceLocal, depthImage,
@@ -1061,15 +573,29 @@ private:
 			.sharingMode = vk::SharingMode::eExclusive,
 		};
 
-		image = vk::raii::Image(device, imageInfo);
+		image = vk::raii::Image(vulkanDevice->getLogicalDevice(), imageInfo);
 
 		vk::MemoryRequirements memRequirements = image.getMemoryRequirements();
 		vk::MemoryAllocateInfo allocInfo{
 			.allocationSize = memRequirements.size,
 			.memoryTypeIndex =
 				findMemoryType(memRequirements.memoryTypeBits, properties)};
-		imageMemory = vk::raii::DeviceMemory(device, allocInfo);
+		imageMemory = vk::raii::DeviceMemory(vulkanDevice->getLogicalDevice(), allocInfo);
 		image.bindMemory(imageMemory, 0);
+	}
+
+	// Creates an ImageView for a given image. Used for depth, MSAA color, and
+	// texture images owned by the Application.
+	vk::raii::ImageView createImageView(vk::Image image, vk::Format format,
+										vk::ImageAspectFlags aspectFlags,
+										uint32_t mipLevels)
+	{
+		vk::ImageViewCreateInfo viewInfo{
+			.image = image,
+			.viewType = vk::ImageViewType::e2D,
+			.format = format,
+			.subresourceRange = {aspectFlags, 0, mipLevels, 0, 1}};
+		return vk::raii::ImageView(vulkanDevice->getLogicalDevice(), viewInfo);
 	}
 
 	// Allocates a VkBuffer and binds it to a new VkDeviceMemory allocation.
@@ -1082,13 +608,13 @@ private:
 		vk::BufferCreateInfo bufferInfo{.size = size,
 										.usage = usage,
 										.sharingMode = vk::SharingMode::eExclusive};
-		buffer = vk::raii::Buffer(device, bufferInfo);
+		buffer = vk::raii::Buffer(vulkanDevice->getLogicalDevice(), bufferInfo);
 		vk::MemoryRequirements memRequirements = buffer.getMemoryRequirements();
 		vk::MemoryAllocateInfo memoryAllocateInfo{
 			.allocationSize = memRequirements.size,
 			.memoryTypeIndex =
 				findMemoryType(memRequirements.memoryTypeBits, properties)};
-		bufferMemory = vk::raii::DeviceMemory(device, memoryAllocateInfo);
+		bufferMemory = vk::raii::DeviceMemory(vulkanDevice->getLogicalDevice(), memoryAllocateInfo);
 		buffer.bindMemory(*bufferMemory, 0);
 	}
 
@@ -1099,7 +625,7 @@ private:
 							vk::MemoryPropertyFlags properties)
 	{
 		vk::PhysicalDeviceMemoryProperties memProperties =
-			physicalDevice.getMemoryProperties();
+			vulkanDevice->getPhysicalDevice().getMemoryProperties();
 		for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++)
 		{
 			if ((typeFilter & (1 << i)) &&
@@ -1124,7 +650,7 @@ private:
 			.commandBufferCount = 1};
 		std::unique_ptr<vk::raii::CommandBuffer> commandBuffer =
 			std::make_unique<vk::raii::CommandBuffer>(
-				std::move(vk::raii::CommandBuffers(device, allocInfo).front()));
+				std::move(vk::raii::CommandBuffers(vulkanDevice->getLogicalDevice(), allocInfo).front()));
 
 		vk::CommandBufferBeginInfo beginInfo{
 			.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit};
@@ -1141,8 +667,8 @@ private:
 
 		vk::SubmitInfo submitInfo{.commandBufferCount = 1,
 								  .pCommandBuffers = &*commandBuffer};
-		queue.submit(submitInfo, nullptr);
-		queue.waitIdle();
+		vulkanDevice->getGraphicsQueue().submit(submitInfo, nullptr);
+		vulkanDevice->getGraphicsQueue().waitIdle();
 	}
 
 	// Copies a buffer into another (typically staging → device-local).
@@ -1291,7 +817,7 @@ private:
 						 uint32_t mipLevels)
 	{
 		vk::FormatProperties props =
-			physicalDevice.getFormatProperties(imageFormat);
+			vulkanDevice->getPhysicalDevice().getFormatProperties(imageFormat);
 		if (!(props.optimalTilingFeatures &
 			  vk::FormatFeatureFlagBits::eSampledImageFilterLinear))
 			throw std::runtime_error(
@@ -1383,7 +909,7 @@ private:
 	// filtering up to the hardware maximum, and full mip range.
 	void createTextureSampler()
 	{
-		vk::PhysicalDeviceProperties properties = physicalDevice.getProperties();
+		vk::PhysicalDeviceProperties properties = vulkanDevice->getPhysicalDevice().getProperties();
 		vk::SamplerCreateInfo samplerInfo{
 			.magFilter = vk::Filter::eLinear,
 			.minFilter = vk::Filter::eLinear,
@@ -1401,7 +927,7 @@ private:
 		samplerInfo.mipLodBias = 0.0f;
 		samplerInfo.minLod = 0.0f;
 		samplerInfo.maxLod = vk::LodClampNone;
-		textureSampler = vk::raii::Sampler(device, samplerInfo);
+		textureSampler = vk::raii::Sampler(vulkanDevice->getLogicalDevice(), samplerInfo);
 	}
 
 	// Parses an OBJ file and fills the vertices/indices arrays.
@@ -1546,7 +1072,7 @@ private:
 			.maxSets = MAX_FRAMES_IN_FLIGHT,
 			.poolSizeCount = static_cast<uint32_t>(poolSize.size()),
 			.pPoolSizes = poolSize.data()};
-		descriptorPool = vk::raii::DescriptorPool(device, poolInfo);
+		descriptorPool = vk::raii::DescriptorPool(vulkanDevice->getLogicalDevice(), poolInfo);
 	}
 
 	// Allocates one descriptor set per frame-in-flight and writes the actual
@@ -1561,7 +1087,7 @@ private:
 			.descriptorSetCount = static_cast<uint32_t>(layouts.size()),
 			.pSetLayouts = layouts.data()};
 		descriptorSets.clear();
-		descriptorSets = device.allocateDescriptorSets(allocInfo);
+		descriptorSets = vulkanDevice->getLogicalDevice().allocateDescriptorSets(allocInfo);
 
 		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
 		{
@@ -1587,7 +1113,7 @@ private:
 									   .descriptorType =
 										   vk::DescriptorType::eCombinedImageSampler,
 									   .pImageInfo = &imageInfo}};
-			device.updateDescriptorSets(descriptorWrites, {});
+			vulkanDevice->getLogicalDevice().updateDescriptorSets(descriptorWrites, {});
 		}
 	}
 
@@ -1607,16 +1133,16 @@ private:
 		assert(presentCompleteSemaphores.empty() &&
 			   renderFinishedSemaphores.empty() && inFlightFences.empty());
 
-		for (size_t i = 0; i < swapChainImages.size(); i++)
+		for (size_t i = 0; i < swapchain->getImages().size(); i++)
 		{
-			renderFinishedSemaphores.emplace_back(device, vk::SemaphoreCreateInfo());
+			renderFinishedSemaphores.emplace_back(vulkanDevice->getLogicalDevice(), vk::SemaphoreCreateInfo());
 		}
 
 		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
 		{
-			presentCompleteSemaphores.emplace_back(device, vk::SemaphoreCreateInfo());
+			presentCompleteSemaphores.emplace_back(vulkanDevice->getLogicalDevice(), vk::SemaphoreCreateInfo());
 			inFlightFences.emplace_back(
-				device,
+				vulkanDevice->getLogicalDevice(),
 				vk::FenceCreateInfo{.flags = vk::FenceCreateFlagBits::eSignaled});
 		}
 	}
@@ -1635,7 +1161,7 @@ private:
 			drawFrame();
 		}
 
-		device.waitIdle();
+		vulkanDevice->getLogicalDevice().waitIdle();
 	}
 
 	/* Architecture of the drawFrame function:
@@ -1643,9 +1169,9 @@ private:
 																																																																																																																																	waitForFences
 	   ◄──────────────── fence signaled (prev frame done) | | acquireNextImage | |
 	   | reset
-	   + record               │ (GPU still busy on other slot) | | queue.submit
+	   + record               │ (GPU still busy on other slot) | | vulkanDevice->getGraphicsQueue().submit
 	   ─────────────────► starts rendering |          wait on semaphore |
-																																																																																																																																	queue.present
+																																																																																																																																	vulkanDevice->getGraphicsQueue().present
 	   ◄─────────────── renderFinished semaphore signaled | | frameIndex++ |
 	*/
 	void drawFrame()
@@ -1656,12 +1182,12 @@ private:
 			rebuildMsaa();
 		}
 
-		if (pendingPresentMode != presentMode)
+		if (pendingPresentMode != swapchain->getPresentMode())
 			recreateSwapChain();
 
 		// Wait for the previous frame to finish rendering (CPU)
 		auto fenceResult =
-			device.waitForFences(*inFlightFences[frameIndex], vk::True, UINT64_MAX);
+			vulkanDevice->getLogicalDevice().waitForFences(*inFlightFences[frameIndex], vk::True, UINT64_MAX);
 		if (fenceResult != vk::Result::eSuccess)
 		{
 			throw std::runtime_error("failed to wait for fence!");
@@ -1669,7 +1195,7 @@ private:
 
 		// Ask the swapchain for the next available framebuffer (image) to render
 		// to.
-		auto [result, imageIndex] = swapChain.acquireNextImage(
+		auto [result, imageIndex] = swapchain->getSwapChain().acquireNextImage(
 			UINT64_MAX, *presentCompleteSemaphores[frameIndex], nullptr);
 
 		// Handles when swap chain is no longer compatible (window drastically
@@ -1690,7 +1216,7 @@ private:
 		}
 
 		// Only reset the fence if we are submitting work, to avoid deadlocks.
-		device.resetFences(*inFlightFences[frameIndex]);
+		vulkanDevice->getLogicalDevice().resetFences(*inFlightFences[frameIndex]);
 
 		commandBuffers[frameIndex].reset();
 
@@ -1720,17 +1246,17 @@ private:
 
 		// Submits a command with the previous info and the fence to signal when
 		// done, so the CPU knows the next free slot at the next draw iteration.
-		queue.submit(submitInfo, *inFlightFences[frameIndex]);
+		vulkanDevice->getGraphicsQueue().submit(submitInfo, *inFlightFences[frameIndex]);
 
 		// Present the image, only after render has finished.
 		const vk::PresentInfoKHR presentInfoKHR{
 			.waitSemaphoreCount = 1,
 			.pWaitSemaphores = &*renderFinishedSemaphores[imageIndex],
 			.swapchainCount = 1,
-			.pSwapchains = &*swapChain,
+			.pSwapchains = &*swapchain->getSwapChain(),
 			.pImageIndices = &imageIndex};
 
-		result = queue.presentKHR(presentInfoKHR);
+		result = vulkanDevice->getGraphicsQueue().presentKHR(presentInfoKHR);
 
 		// Swapchain rewcreation: if at this point the swapchain is out of date or
 		// suboptimal or the framebuffer has been resized, we need to recreate the
@@ -1783,8 +1309,8 @@ private:
 		ubo.view = lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f),
 						  glm::vec3(0.0f, 0.0f, 1.0f));
 		ubo.proj = glm::perspective(glm::radians(45.0f),
-									static_cast<float>(swapChainExtent.width) /
-										static_cast<float>(swapChainExtent.height),
+									static_cast<float>(swapchain->getExtent().width) /
+										static_cast<float>(swapchain->getExtent().height),
 									0.1f, 10.0f);
 
 		// Flip the scaling factor of the Y axis in the projection matrix
@@ -1825,7 +1351,7 @@ private:
 		// Transition swapchain image to color attachment optimal (resolve target,
 		// or direct render target when no MSAA)
 		transition_image_layout(
-			swapChainImages[imageIndex], vk::ImageLayout::eUndefined,
+			swapchain->getImages()[imageIndex], vk::ImageLayout::eUndefined,
 			vk::ImageLayout::eColorAttachmentOptimal, {},		// srcAccessMask
 			vk::AccessFlagBits2::eColorAttachmentWrite,			// dstAccessMask
 			vk::PipelineStageFlagBits2::eTopOfPipe,				// srcStageMask
@@ -1857,7 +1383,7 @@ private:
 											  .resolveMode =
 												  vk::ResolveModeFlagBits::eAverage,
 											  .resolveImageView =
-												  *swapChainImageViews[imageIndex],
+												  *swapchain->getImageViews()[imageIndex],
 											  .resolveImageLayout =
 												  vk::ImageLayout::
 													  eColorAttachmentOptimal,
@@ -1867,7 +1393,7 @@ private:
 												  vk::AttachmentStoreOp::eDontCare,
 											  .clearValue = clearColor}
 				: vk::RenderingAttachmentInfo{
-					  .imageView = *swapChainImageViews[imageIndex],
+					  .imageView = *swapchain->getImageViews()[imageIndex],
 					  .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
 					  .loadOp = vk::AttachmentLoadOp::eClear,
 					  .storeOp = vk::AttachmentStoreOp::eStore,
@@ -1882,7 +1408,7 @@ private:
 
 		// Set up rendering info
 		vk::RenderingInfo renderingInfo{
-			.renderArea = {vk::Offset2D{0, 0}, swapChainExtent},
+			.renderArea = {vk::Offset2D{0, 0}, swapchain->getExtent()},
 			.layerCount = 1,
 			.colorAttachmentCount = 1,
 			.pColorAttachments = &attachmentInfo,
@@ -1900,10 +1426,10 @@ private:
 		// Set dynamic viewport and scissor
 		commandBuffer.setViewport(
 			0,
-			vk::Viewport{0.0f, 0.0f, static_cast<float>(swapChainExtent.width),
-						 static_cast<float>(swapChainExtent.height), 0.0f, 1.0f});
+			vk::Viewport{0.0f, 0.0f, static_cast<float>(swapchain->getExtent().width),
+						 static_cast<float>(swapchain->getExtent().height), 0.0f, 1.0f});
 		commandBuffer.setScissor(0,
-								 vk::Rect2D{vk::Offset2D{0, 0}, swapChainExtent});
+								 vk::Rect2D{vk::Offset2D{0, 0}, swapchain->getExtent()});
 
 		commandBuffers[frameIndex].bindDescriptorSets(
 			vk::PipelineBindPoint::eGraphics, pipelineLayout, 0,
@@ -1928,14 +1454,14 @@ private:
 
 		// second pass: ImGui renders directly into swapchain image
 		vk::RenderingAttachmentInfo imguiColorAttachment{
-			.imageView = *swapChainImageViews[imageIndex],
+			.imageView = *swapchain->getImageViews()[imageIndex],
 			.imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
 			.loadOp = vk::AttachmentLoadOp::eLoad, // load, don't clear — preserve
 												   // your scene
 			.storeOp = vk::AttachmentStoreOp::eStore};
 
 		vk::RenderingInfo imguiRenderingInfo{
-			.renderArea = {vk::Offset2D{0, 0}, swapChainExtent},
+			.renderArea = {vk::Offset2D{0, 0}, swapchain->getExtent()},
 			.layerCount = 1,
 			.colorAttachmentCount = 1,
 			.pColorAttachments = &imguiColorAttachment};
@@ -1946,7 +1472,7 @@ private:
 
 		// Transition image back to present source after rendering
 		transition_image_layout(
-			swapChainImages[imageIndex], vk::ImageLayout::eColorAttachmentOptimal,
+			swapchain->getImages()[imageIndex], vk::ImageLayout::eColorAttachmentOptimal,
 			vk::ImageLayout::ePresentSrcKHR,
 			vk::AccessFlagBits2::eColorAttachmentWrite,			// srcAccessMask
 			{},													// dstAccessMask
@@ -2000,23 +1526,11 @@ private:
 	// swapchain-sized resources, then recreates them at the new size.
 	void recreateSwapChain()
 	{
-		int width = 0, height = 0;
-
-		glfwGetFramebufferSize(window, &width, &height);
-		while (width == 0 || height == 0)
-		{
-			glfwGetFramebufferSize(window, &width, &height);
-			glfwWaitEvents();
-		}
-
-		device.waitIdle();
-
+		vulkanDevice->getLogicalDevice().waitIdle();
 		cleanupSwapChain();
-
-		createSwapChain();
-		createImageViews();
+		swapchain->recreate(window, pendingPresentMode);
 		ImGui_ImplVulkan_SetMinImageCount(
-			static_cast<uint32_t>(swapChainImages.size()));
+			static_cast<uint32_t>(swapchain->getImages().size()));
 		createDepthResources();
 		createColorResources();
 	}
@@ -2025,7 +1539,7 @@ private:
 	// runtime change to msaaSamples. Must be called with no frames in flight.
 	void rebuildMsaa()
 	{
-		device.waitIdle();
+		vulkanDevice->getLogicalDevice().waitIdle();
 		colorImageView = nullptr;
 		colorImage = nullptr;
 		colorImageMemory = nullptr;
@@ -2038,8 +1552,8 @@ private:
 		createGraphicsPipeline();
 	}
 
-	// Destroys all resources that are tied to the swapchain extent.
-	// Called both from recreateSwapChain() and from cleanup().
+	// Destroys Application-owned resources tied to the swapchain extent.
+	// The swapchain itself (image views, handle) is managed by the Swapchain object.
 	void cleanupSwapChain()
 	{
 		colorImageView = nullptr;
@@ -2048,14 +1562,12 @@ private:
 		depthImageView = nullptr;
 		depthImage = nullptr;
 		depthImageMemory = nullptr;
-		swapChainImageViews.clear();
-		swapChain = nullptr;
 	}
 
 	// Destroys all Vulkan objects in reverse dependency order (child objects
 	// before parents). RAII handles call vkDestroy automatically when set to
 	// nullptr, but order matters: e.g. the device must outlive everything
-	// allocated from it, and the instance must outlive the device.
+	// allocated from it, and the instance must outlive the vulkanDevice->getLogicalDevice().
 	void cleanup()
 	{
 		cleanupSwapChain();
@@ -2084,11 +1596,8 @@ private:
 		vertexBuffer = nullptr;
 		vertexBufferMemory = nullptr;
 		descriptorSetLayout = nullptr;
-		queue = nullptr;
-		device = nullptr;
-		surface = nullptr;
-		debugMessenger = nullptr;
-		instance = nullptr;
+		swapchain.reset();
+		vulkanDevice.reset();
 
 		glfwDestroyWindow(window);
 		glfwTerminate();
@@ -2101,8 +1610,8 @@ private:
 		ImGui::NewFrame();
 
 		ImGui::GetIO().DisplaySize = ImVec2(
-			static_cast<float>(swapChainExtent.width),
-			static_cast<float>(swapChainExtent.height));
+			static_cast<float>(swapchain->getExtent().width),
+			static_cast<float>(swapchain->getExtent().height));
 
 		ImGui::Begin("Info");
 
@@ -2113,9 +1622,9 @@ private:
 		ImGui::Separator();
 
 		// Display info
-		ImGui::Text("Resolution: %ux%u", swapChainExtent.width,
-					swapChainExtent.height);
-		ImGui::Text("Device: %s", physicalDevice.getProperties().deviceName.data());
+		ImGui::Text("Resolution: %ux%u", swapchain->getExtent().width,
+					swapchain->getExtent().height);
+		ImGui::Text("Device: %s", vulkanDevice->getPhysicalDevice().getProperties().deviceName.data());
 		ImGui::Text("Mip levels: %u", mipLevels);
 
 		ImGui::Separator();
@@ -2140,7 +1649,7 @@ private:
 		{
 			for (auto count : kSampleCounts)
 			{
-				if (!(supportedMsaaSamples & count))
+				if (!(vulkanDevice->getSupportedMsaaSamples() & count))
 					continue;
 				bool selected = (count == pendingMsaaSamples);
 				if (ImGui::Selectable(vk::to_string(count).c_str(), selected))
@@ -2167,7 +1676,7 @@ private:
 			.maxSets = 1,
 			.poolSizeCount = 1,
 			.pPoolSizes = &pool_size};
-		imguiDescriptorPool = vk::raii::DescriptorPool(device, pool_info);
+		imguiDescriptorPool = vk::raii::DescriptorPool(vulkanDevice->getLogicalDevice(), pool_info);
 
 		IMGUI_CHECKVERSION();
 		ImGui::CreateContext();
@@ -2178,19 +1687,19 @@ private:
 		ImGui_ImplGlfw_InitForVulkan(window, true);
 
 		ImGui_ImplVulkan_InitInfo init_info = {};
-		init_info.Instance = *instance;
-		init_info.PhysicalDevice = *physicalDevice;
-		init_info.Device = *device;
-		init_info.Queue = *queue;
+		init_info.Instance = *vulkanDevice->getInstance();
+		init_info.PhysicalDevice = *vulkanDevice->getPhysicalDevice();
+		init_info.Device = *vulkanDevice->getLogicalDevice();
+		init_info.Queue = *vulkanDevice->getGraphicsQueue();
 		init_info.DescriptorPool = *imguiDescriptorPool;
 		init_info.MinImageCount = 2;
-		init_info.ImageCount = swapChainImages.size();
+		init_info.ImageCount = swapchain->getImages().size();
 
 		init_info.UseDynamicRendering = true;
 		init_info.PipelineInfoMain.PipelineRenderingCreateInfo = {
 			.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR,
 			.colorAttachmentCount = 1,
-			.pColorAttachmentFormats = (VkFormat *)&swapChainSurfaceFormat.format};
+			.pColorAttachmentFormats = (VkFormat *)&swapchain->getSurfaceFormat().format};
 		init_info.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
 		ImGui_ImplVulkan_Init(&init_info);
 	}

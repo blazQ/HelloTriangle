@@ -60,7 +60,7 @@ file(COPY ${CMAKE_SOURCE_DIR}/models DESTINATION ${CMAKE_BINARY_DIR})
 
 set(IMGUI_DIR ${CMAKE_SOURCE_DIR}/extern/imgui)
 
-add_executable(main src/main.cpp
+add_executable(main src/main.cpp src/Device.cpp src/Swapchain.cpp
     ${IMGUI_DIR}/imgui.cpp
     ${IMGUI_DIR}/imgui_draw.cpp
     ${IMGUI_DIR}/imgui_tables.cpp

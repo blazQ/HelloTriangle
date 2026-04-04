@@ -46,3 +46,5 @@ CMake/
 *.d
 *.dSYM/
 cputypetest.c
+notes/cpp_features.md
+TODO.md
