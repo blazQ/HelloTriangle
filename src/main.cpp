@@ -908,39 +908,40 @@ private:
 	// constant) places it in world space at draw time.
 	// =========================================================================
 
-	static std::pair<std::vector<Vertex>, std::vector<uint32_t>> makeCube()
+	static std::pair<std::vector<Vertex>, std::vector<uint32_t>> makeCube(glm::vec3 color, float size)
 	{
+		float h = size * 0.5f;
 		std::vector<Vertex> verts = {
 			// +Z face (front)
-			{{-0.5f, -0.5f,  0.5f}, {1,1,1}, {0,0}},
-			{{ 0.5f, -0.5f,  0.5f}, {1,1,1}, {1,0}},
-			{{ 0.5f,  0.5f,  0.5f}, {1,1,1}, {1,1}},
-			{{-0.5f,  0.5f,  0.5f}, {1,1,1}, {0,1}},
+			{{-h, -h,  h}, color, {0,0}},
+			{{ h, -h,  h}, color, {1,0}},
+			{{ h,  h,  h}, color, {1,1}},
+			{{-h,  h,  h}, color, {0,1}},
 			// -Z face (back)
-			{{ 0.5f, -0.5f, -0.5f}, {1,1,1}, {0,0}},
-			{{-0.5f, -0.5f, -0.5f}, {1,1,1}, {1,0}},
-			{{-0.5f,  0.5f, -0.5f}, {1,1,1}, {1,1}},
-			{{ 0.5f,  0.5f, -0.5f}, {1,1,1}, {0,1}},
+			{{ h, -h, -h}, color, {0,0}},
+			{{-h, -h, -h}, color, {1,0}},
+			{{-h,  h, -h}, color, {1,1}},
+			{{ h,  h, -h}, color, {0,1}},
 			// +X face (right)
-			{{ 0.5f, -0.5f,  0.5f}, {1,1,1}, {0,0}},
-			{{ 0.5f, -0.5f, -0.5f}, {1,1,1}, {1,0}},
-			{{ 0.5f,  0.5f, -0.5f}, {1,1,1}, {1,1}},
-			{{ 0.5f,  0.5f,  0.5f}, {1,1,1}, {0,1}},
+			{{ h, -h,  h}, color, {0,0}},
+			{{ h, -h, -h}, color, {1,0}},
+			{{ h,  h, -h}, color, {1,1}},
+			{{ h,  h,  h}, color, {0,1}},
 			// -X face (left)
-			{{-0.5f, -0.5f, -0.5f}, {1,1,1}, {0,0}},
-			{{-0.5f, -0.5f,  0.5f}, {1,1,1}, {1,0}},
-			{{-0.5f,  0.5f,  0.5f}, {1,1,1}, {1,1}},
-			{{-0.5f,  0.5f, -0.5f}, {1,1,1}, {0,1}},
+			{{-h, -h, -h}, color, {0,0}},
+			{{-h, -h,  h}, color, {1,0}},
+			{{-h,  h,  h}, color, {1,1}},
+			{{-h,  h, -h}, color, {0,1}},
 			// +Y face (top)
-			{{-0.5f,  0.5f,  0.5f}, {1,1,1}, {0,0}},
-			{{ 0.5f,  0.5f,  0.5f}, {1,1,1}, {1,0}},
-			{{ 0.5f,  0.5f, -0.5f}, {1,1,1}, {1,1}},
-			{{-0.5f,  0.5f, -0.5f}, {1,1,1}, {0,1}},
+			{{-h,  h,  h}, color, {0,0}},
+			{{ h,  h,  h}, color, {1,0}},
+			{{ h,  h, -h}, color, {1,1}},
+			{{-h,  h, -h}, color, {0,1}},
 			// -Y face (bottom)
-			{{-0.5f, -0.5f, -0.5f}, {1,1,1}, {0,0}},
-			{{ 0.5f, -0.5f, -0.5f}, {1,1,1}, {1,0}},
-			{{ 0.5f, -0.5f,  0.5f}, {1,1,1}, {1,1}},
-			{{-0.5f, -0.5f,  0.5f}, {1,1,1}, {0,1}},
+			{{-h, -h, -h}, color, {0,0}},
+			{{ h, -h, -h}, color, {1,0}},
+			{{ h, -h,  h}, color, {1,1}},
+			{{-h, -h,  h}, color, {0,1}},
 		};
 		std::vector<uint32_t> idxs;
 		for (uint32_t f = 0; f < 6; ++f) {
@@ -950,13 +951,14 @@ private:
 		return {verts, idxs};
 	}
 
-	static std::pair<std::vector<Vertex>, std::vector<uint32_t>> makePlane()
+	static std::pair<std::vector<Vertex>, std::vector<uint32_t>> makePlane(glm::vec3 color, float size)
 	{
+		float h = size * 0.5f;
 		std::vector<Vertex> verts = {
-			{{-2.0f, -2.0f, 0.0f}, {1,0.5,1}, {0,0}},
-			{{ 2.0f, -2.0f, 0.0f}, {1,0.5,1}, {1,0}},
-			{{ 2.0f,  2.0f, 0.0f}, {1,0.5,1}, {1,1}},
-			{{-2.0f,  2.0f, 0.0f}, {1,0.5,1}, {0,1}},
+			{{-h, -h, 0.0f}, color, {0,0}},
+			{{ h, -h, 0.0f}, color, {1,0}},
+			{{ h,  h, 0.0f}, color, {1,1}},
+			{{-h,  h, 0.0f}, color, {0,1}},
 		};
 		std::vector<uint32_t> idxs = {0,1,2, 0,2,3};
 		return {verts, idxs};
@@ -1026,9 +1028,13 @@ private:
 		for (const auto &obj : scene["objects"])
 		{
 			std::string mesh = obj["mesh"];
-			glm::vec3 pos = {obj["position"][0], obj["position"][1], obj["position"][2]};
+			glm::vec3 pos   = {obj["position"][0], obj["position"][1], obj["position"][2]};
+			glm::vec3 color = obj.contains("color")
+				? glm::vec3{obj["color"][0], obj["color"][1], obj["color"][2]}
+				: glm::vec3{1.0f, 1.0f, 1.0f};
+			float size      = obj.value("size", 1.0f);
 
-			auto [verts, idxs] = (mesh == "cube") ? makeCube() : makePlane();
+			auto [verts, idxs] = (mesh == "cube") ? makeCube(color, size) : makePlane(color, size);
 
 			Renderable r;
 			r.modelMatrix = glm::translate(glm::mat4(1.0f), pos);
@@ -1316,12 +1322,12 @@ private:
 						 .count();
 
 		UniformBufferObject ubo{};
-		ubo.view = lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f),
+		ubo.view = lookAt(glm::vec3(4.0f, 4.0f, 4.0f), glm::vec3(0.0f, 0.0f, 0.0f),
 						  glm::vec3(0.0f, 0.0f, 1.0f));
-		ubo.proj = glm::perspective(glm::radians(45.0f),
+		ubo.proj = glm::perspective(glm::radians(75.0f),
 									static_cast<float>(swapchain->getExtent().width) /
 										static_cast<float>(swapchain->getExtent().height),
-									0.1f, 10.0f);
+									0.1f, 20.0f);
 
 		// Flip the scaling factor of the Y axis in the projection matrix
 		ubo.proj[1][1] *= -1;
