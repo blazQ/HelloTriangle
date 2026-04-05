@@ -58,7 +58,7 @@ constexpr uint32_t WIDTH = 800;
 constexpr uint32_t HEIGHT = 600;
 
 const std::string TEXTURE_PATH = "textures/viking_room.png";
-const std::string SCENE_PATH   = "scenes/scene.json";
+const std::string SCENE_PATH = "scenes/scene.json";
 
 /* This is used to make the drawing process more efficient by avoiding the CPU
 being idle while the GPU renders frame N. By having multiple frames in flight,
@@ -90,14 +90,15 @@ struct Vertex
 	}
 };
 
-struct Renderable {
-    vk::raii::Buffer         vertexBuffer       = nullptr;
-    vk::raii::DeviceMemory   vertexBufferMemory = nullptr;
-    vk::raii::Buffer         indexBuffer        = nullptr;
-    vk::raii::DeviceMemory   indexBufferMemory  = nullptr;
-    uint32_t                 indexCount         = 0;
+struct Renderable
+{
+	vk::raii::Buffer vertexBuffer = nullptr;
+	vk::raii::DeviceMemory vertexBufferMemory = nullptr;
+	vk::raii::Buffer indexBuffer = nullptr;
+	vk::raii::DeviceMemory indexBufferMemory = nullptr;
+	uint32_t indexCount = 0;
 
-    glm::mat4                modelMatrix        = glm::mat4(1.0f);
+	glm::mat4 modelMatrix = glm::mat4(1.0f);
 };
 
 class HelloTriangleApplication
@@ -137,6 +138,7 @@ private:
 	vk::raii::DescriptorSetLayout descriptorSetLayout = nullptr;
 	vk::raii::PipelineLayout pipelineLayout = nullptr;
 	vk::raii::Pipeline graphicsPipeline = nullptr;
+	vk::raii::Pipeline shadowPipeline = nullptr;
 
 	vk::PresentModeKHR pendingPresentMode = vk::PresentModeKHR::eMailbox;
 
@@ -170,6 +172,13 @@ private:
 	vk::raii::ImageView textureImageView = nullptr;
 	vk::raii::Sampler textureSampler = nullptr;
 
+	// --- Shadow Mapping ---
+	static constexpr uint32_t SHADOW_MAP_SIZE = 1024;
+	vk::raii::Image shadowMapImage = nullptr;
+	vk::raii::DeviceMemory shadowMapImageMemory = nullptr;
+	vk::raii::ImageView shadowMapImageView = nullptr;
+	vk::raii::Sampler shadowMapSampler = nullptr;
+
 	// --- Scene geometry ---
 	// One Renderable per object; each owns its own GPU buffers and model matrix.
 	std::vector<Renderable> renderables;
@@ -197,11 +206,14 @@ private:
 	std::vector<vk::raii::Semaphore> renderFinishedSemaphores;
 	std::vector<vk::raii::Fence> inFlightFences;
 
+	glm::vec3 lightDir = glm::normalize(glm::vec3(2.0f, 1.0f, -2.0f));
+
 	// Data layout of the uniform buffer as the shader sees it.
 	struct UniformBufferObject
 	{
 		glm::mat4 view;
 		glm::mat4 proj;
+		glm::mat4 lightSpaceMatrix;
 	};
 
 	vk::raii::DescriptorPool imguiDescriptorPool = nullptr;
@@ -251,9 +263,12 @@ private:
 		swapchain = std::make_unique<Swapchain>(*vulkanDevice, window, pendingPresentMode);
 		createDescriptorSetLayout();
 		createGraphicsPipeline();
+		createShadowPipeline();
 		createCommandPool();
 		createColorResources();
 		createDepthResources();
+		createShadowMapResources();
+		createShadowMapSampler();
 		createTextureImage();
 		createTextureImageView();
 		createTextureSampler();
@@ -283,6 +298,9 @@ private:
 								   vk::ShaderStageFlagBits::eVertex, nullptr),
 							   vk::DescriptorSetLayoutBinding(
 								   1, vk::DescriptorType::eCombinedImageSampler, 1,
+								   vk::ShaderStageFlagBits::eFragment, nullptr),
+							   vk::DescriptorSetLayoutBinding(
+								   2, vk::DescriptorType::eCombinedImageSampler, 1,
 								   vk::ShaderStageFlagBits::eFragment, nullptr)};
 
 		vk::DescriptorSetLayoutCreateInfo layoutInfo{
@@ -303,7 +321,7 @@ private:
 	void createGraphicsPipeline()
 	{
 		vk::raii::ShaderModule shaderModule =
-			createShaderModule(readFile("shaders/slang.spv"));
+			createShaderModule(readFile("shaders/scene.spv"));
 		vk::PipelineShaderStageCreateInfo vertShaderStageInfo{
 			.stage = vk::ShaderStageFlagBits::eVertex,
 			.module = shaderModule,
@@ -376,7 +394,7 @@ private:
 			.pPushConstantRanges = &pushConstantRange};
 
 		pipelineLayout = vk::raii::PipelineLayout(vulkanDevice->getLogicalDevice(), pipelineLayoutInfo);
-		vk::Format depthFormat = findDepthFormat();
+		vk::Format depthFormat = vulkanDevice->findDepthFormat();
 		vk::PipelineDepthStencilStateCreateInfo depthStencil{
 			.depthTestEnable = vk::True,
 			.depthWriteEnable = vk::True,
@@ -402,6 +420,80 @@ private:
 			.layout = pipelineLayout,
 			.renderPass = nullptr};
 		graphicsPipeline = vk::raii::Pipeline(vulkanDevice->getLogicalDevice(), nullptr, pipelineInfo);
+	}
+
+	void createShadowPipeline() {
+		vk::raii::ShaderModule shaderModule =
+			createShaderModule(readFile("shaders/shadow.spv"));
+
+		vk::PipelineShaderStageCreateInfo vertShaderStageInfo{
+			.stage = vk::ShaderStageFlagBits::eVertex,
+			.module = shaderModule,
+			.pName = "vertMain"};
+
+		auto bindingDescription = Vertex::getBindingDescription();
+		auto attributeDescriptions = Vertex::getAttributeDescriptions();
+
+		vk::PipelineVertexInputStateCreateInfo vertexInputInfo{
+			.vertexBindingDescriptionCount = 1,
+			.pVertexBindingDescriptions = &bindingDescription,
+			.vertexAttributeDescriptionCount =
+				static_cast<uint32_t>(attributeDescriptions.size()),
+			.pVertexAttributeDescriptions = attributeDescriptions.data()};
+		
+		vk::PipelineInputAssemblyStateCreateInfo inputAssembly{
+			.topology = vk::PrimitiveTopology::eTriangleList};
+		
+		vk::Viewport viewport{.x = 0.0f,
+							  .y = 0.0f,
+							  .width = static_cast<float>(SHADOW_MAP_SIZE),
+							  .height = static_cast<float>(SHADOW_MAP_SIZE),
+							  .minDepth = 0.0f,
+							  .maxDepth = 1.0f};
+		vk::Rect2D scissor{.offset = vk::Offset2D{0, 0}, .extent = vk::Extent2D{SHADOW_MAP_SIZE, SHADOW_MAP_SIZE}};
+		vk::PipelineViewportStateCreateInfo viewportState{.viewportCount = 1,
+														  .pViewports = &viewport,
+														  .scissorCount = 1,
+														  .pScissors = &scissor};
+		vk::PipelineRasterizationStateCreateInfo rasterizer{
+			.depthClampEnable = vk::False,
+			.rasterizerDiscardEnable = vk::False,
+			.polygonMode = vk::PolygonMode::eFill,
+			.cullMode = vk::CullModeFlagBits::eFront,
+			.frontFace = vk::FrontFace::eCounterClockwise,
+			.depthBiasEnable = vk::True,
+			.depthBiasConstantFactor = 1.25f,
+			.depthBiasSlopeFactor = 1.75f,
+			.lineWidth = 1.0f};
+		vk::PipelineMultisampleStateCreateInfo multisampling{
+			.rasterizationSamples = vk::SampleCountFlagBits::e1};
+		vk::PipelineDepthStencilStateCreateInfo depthStencil{
+			.depthTestEnable = vk::True,
+			.depthWriteEnable = vk::True,
+			.depthCompareOp = vk::CompareOp::eLessOrEqual,
+		};
+		vk::PipelineColorBlendStateCreateInfo colorBlending{
+			.attachmentCount = 0};
+
+		vk::Format depthFormat = vulkanDevice->findDepthFormat();
+		vk::PipelineRenderingCreateInfo pipelineRenderingCreateInfo{
+			.colorAttachmentCount = 0,
+			.depthAttachmentFormat = depthFormat};
+		
+		vk::GraphicsPipelineCreateInfo pipelineInfo{
+			.pNext = &pipelineRenderingCreateInfo,
+			.stageCount = 1,
+			.pStages = &vertShaderStageInfo,
+			.pVertexInputState = &vertexInputInfo,
+			.pInputAssemblyState = &inputAssembly,
+			.pViewportState = &viewportState,
+			.pRasterizationState = &rasterizer,
+			.pMultisampleState = &multisampling,
+			.pDepthStencilState = &depthStencil,
+			.pColorBlendState = &colorBlending,
+			.layout = pipelineLayout};
+		
+		shadowPipeline = vk::raii::Pipeline(vulkanDevice->getLogicalDevice(), nullptr, pipelineInfo);
 	}
 
 	// Reads a binary file into a byte buffer. Used to load the SPIR-V shader.
@@ -433,47 +525,13 @@ private:
 		return shaderModule;
 	}
 
-	// Iterates a candidate list of depth formats and returns the first one the
-	// GPU supports with optimal tiling and depth-stencil usage.
-	vk::Format findDepthFormat()
-	{
-		return findSupportedFormat(
-			{vk::Format::eD32Sfloat, vk::Format::eD32SfloatS8Uint,
-			 vk::Format::eD24UnormS8Uint},
-			vk::ImageTiling::eOptimal,
-			vk::FormatFeatureFlagBits::eDepthStencilAttachment);
-	}
-
-	// Generic format selection: asks the GPU which of the candidate formats
-	// supports the requested tiling and feature flags.
-	vk::Format findSupportedFormat(const std::vector<vk::Format> &candidates,
-								   vk::ImageTiling tiling,
-								   vk::FormatFeatureFlags features)
-	{
-		for (const auto format : candidates)
-		{
-			vk::FormatProperties props = vulkanDevice->getPhysicalDevice().getFormatProperties(format);
-			if (tiling == vk::ImageTiling::eLinear &&
-				(props.linearTilingFeatures & features) == features)
-			{
-				return format;
-			}
-			if (tiling == vk::ImageTiling::eOptimal &&
-				(props.optimalTilingFeatures & features) == features)
-			{
-				return format;
-			}
-		}
-
-		throw std::runtime_error("failed to find supported format!");
-	}
-
 	// Returns true if the given depth format also includes a stencil component.
 	bool hasStencilComponent(vk::Format format)
 	{
 		return format == vk::Format::eD32SfloatS8Uint ||
 			   format == vk::Format::eD24UnormS8Uint;
 	}
+
 
 	// =========================================================================
 	// SECTION 6: COMMAND INFRASTRUCTURE
@@ -520,6 +578,10 @@ private:
 	// Depth image: stores the depth (Z) value of the closest fragment at each
 	//   pixel. The depth test discards fragments that are behind already-drawn
 	//   geometry.
+	// 
+	// Shadow map: a depth image rendered from the light's perspective. During
+	//   the main render pass, we sample this image to determine whether a pixel is
+	//   in shadow or not.
 	// =========================================================================
 
 	// Creates the MSAA color image and its view. Both use the same format as the
@@ -543,7 +605,7 @@ private:
 	// The depth image must have the same MSAA sample count as the color image.
 	void createDepthResources()
 	{
-		vk::Format depthFormat = findDepthFormat();
+		vk::Format depthFormat = vulkanDevice->findDepthFormat();
 		createImage(swapchain->getExtent().width, swapchain->getExtent().height, 1, msaaSamples,
 					depthFormat, vk::ImageTiling::eOptimal,
 					vk::ImageUsageFlagBits::eDepthStencilAttachment,
@@ -551,6 +613,39 @@ private:
 					depthImageMemory);
 		depthImageView = vulkanDevice->createImageView(depthImage, depthFormat,
 													   vk::ImageAspectFlagBits::eDepth, 1);
+	}
+
+	void createShadowMapResources() {
+		vk::Format depthFormat = vulkanDevice->findDepthFormat();
+		createImage(SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, 1, vk::SampleCountFlagBits::e1,
+					depthFormat, vk::ImageTiling::eOptimal,
+					vk::ImageUsageFlagBits::eDepthStencilAttachment |
+						vk::ImageUsageFlagBits::eSampled,
+					vk::MemoryPropertyFlagBits::eDeviceLocal, shadowMapImage,
+					shadowMapImageMemory);
+		shadowMapImageView = vulkanDevice->createImageView(
+			shadowMapImage, depthFormat, vk::ImageAspectFlagBits::eDepth, 1);
+	}
+
+	void createShadowMapSampler(){
+		vk::SamplerCreateInfo samplerInfo{
+			.magFilter              = vk::Filter::eLinear,
+			.minFilter              = vk::Filter::eLinear,
+			.mipmapMode             = vk::SamplerMipmapMode::eLinear,
+			.addressModeU           = vk::SamplerAddressMode::eClampToEdge,
+			.addressModeV           = vk::SamplerAddressMode::eClampToEdge,
+			.addressModeW           = vk::SamplerAddressMode::eClampToEdge,
+			.mipLodBias             = 0.0f,
+			.anisotropyEnable       = vk::False,
+			.maxAnisotropy          = 1.0f,
+			.compareEnable          = vk::True,
+			.compareOp              = vk::CompareOp::eLessOrEqual,
+			.minLod                 = 0.0f,
+			.maxLod                 = 0.0f,
+			.borderColor            = vk::BorderColor::eFloatOpaqueWhite,
+			.unnormalizedCoordinates = vk::False};
+		shadowMapSampler =
+			vk::raii::Sampler(vulkanDevice->getLogicalDevice(), samplerInfo);
 	}
 
 	// =========================================================================
@@ -913,40 +1008,41 @@ private:
 		float h = size * 0.5f;
 		std::vector<Vertex> verts = {
 			// +Z face (front)
-			{{-h, -h,  h}, color, {0,0}},
-			{{ h, -h,  h}, color, {1,0}},
-			{{ h,  h,  h}, color, {1,1}},
-			{{-h,  h,  h}, color, {0,1}},
+			{{-h, -h, h}, color, {0, 0}},
+			{{h, -h, h}, color, {1, 0}},
+			{{h, h, h}, color, {1, 1}},
+			{{-h, h, h}, color, {0, 1}},
 			// -Z face (back)
-			{{ h, -h, -h}, color, {0,0}},
-			{{-h, -h, -h}, color, {1,0}},
-			{{-h,  h, -h}, color, {1,1}},
-			{{ h,  h, -h}, color, {0,1}},
+			{{h, -h, -h}, color, {0, 0}},
+			{{-h, -h, -h}, color, {1, 0}},
+			{{-h, h, -h}, color, {1, 1}},
+			{{h, h, -h}, color, {0, 1}},
 			// +X face (right)
-			{{ h, -h,  h}, color, {0,0}},
-			{{ h, -h, -h}, color, {1,0}},
-			{{ h,  h, -h}, color, {1,1}},
-			{{ h,  h,  h}, color, {0,1}},
+			{{h, -h, h}, color, {0, 0}},
+			{{h, -h, -h}, color, {1, 0}},
+			{{h, h, -h}, color, {1, 1}},
+			{{h, h, h}, color, {0, 1}},
 			// -X face (left)
-			{{-h, -h, -h}, color, {0,0}},
-			{{-h, -h,  h}, color, {1,0}},
-			{{-h,  h,  h}, color, {1,1}},
-			{{-h,  h, -h}, color, {0,1}},
+			{{-h, -h, -h}, color, {0, 0}},
+			{{-h, -h, h}, color, {1, 0}},
+			{{-h, h, h}, color, {1, 1}},
+			{{-h, h, -h}, color, {0, 1}},
 			// +Y face (top)
-			{{-h,  h,  h}, color, {0,0}},
-			{{ h,  h,  h}, color, {1,0}},
-			{{ h,  h, -h}, color, {1,1}},
-			{{-h,  h, -h}, color, {0,1}},
+			{{-h, h, h}, color, {0, 0}},
+			{{h, h, h}, color, {1, 0}},
+			{{h, h, -h}, color, {1, 1}},
+			{{-h, h, -h}, color, {0, 1}},
 			// -Y face (bottom)
-			{{-h, -h, -h}, color, {0,0}},
-			{{ h, -h, -h}, color, {1,0}},
-			{{ h, -h,  h}, color, {1,1}},
-			{{-h, -h,  h}, color, {0,1}},
+			{{-h, -h, -h}, color, {0, 0}},
+			{{h, -h, -h}, color, {1, 0}},
+			{{h, -h, h}, color, {1, 1}},
+			{{-h, -h, h}, color, {0, 1}},
 		};
 		std::vector<uint32_t> idxs;
-		for (uint32_t f = 0; f < 6; ++f) {
+		for (uint32_t f = 0; f < 6; ++f)
+		{
 			uint32_t b = f * 4;
-			idxs.insert(idxs.end(), {b,b+1,b+2, b,b+2,b+3});
+			idxs.insert(idxs.end(), {b, b + 1, b + 2, b, b + 2, b + 3});
 		}
 		return {verts, idxs};
 	}
@@ -955,12 +1051,12 @@ private:
 	{
 		float h = size * 0.5f;
 		std::vector<Vertex> verts = {
-			{{-h, -h, 0.0f}, color, {0,0}},
-			{{ h, -h, 0.0f}, color, {1,0}},
-			{{ h,  h, 0.0f}, color, {1,1}},
-			{{-h,  h, 0.0f}, color, {0,1}},
+			{{-h, -h, 0.0f}, color, {0, 0}},
+			{{h, -h, 0.0f}, color, {1, 0}},
+			{{h, h, 0.0f}, color, {1, 1}},
+			{{-h, h, 0.0f}, color, {0, 1}},
 		};
-		std::vector<uint32_t> idxs = {0,1,2, 0,2,3};
+		std::vector<uint32_t> idxs = {0, 1, 2, 0, 2, 3};
 		return {verts, idxs};
 	}
 
@@ -1028,11 +1124,11 @@ private:
 		for (const auto &obj : scene["objects"])
 		{
 			std::string mesh = obj["mesh"];
-			glm::vec3 pos   = {obj["position"][0], obj["position"][1], obj["position"][2]};
+			glm::vec3 pos = {obj["position"][0], obj["position"][1], obj["position"][2]};
 			glm::vec3 color = obj.contains("color")
-				? glm::vec3{obj["color"][0], obj["color"][1], obj["color"][2]}
-				: glm::vec3{1.0f, 1.0f, 1.0f};
-			float size      = obj.value("size", 1.0f);
+								  ? glm::vec3{obj["color"][0], obj["color"][1], obj["color"][2]}
+								  : glm::vec3{1.0f, 1.0f, 1.0f};
+			float size = obj.value("size", 1.0f);
 
 			auto [verts, idxs] = (mesh == "cube") ? makeCube(color, size) : makePlane(color, size);
 
@@ -1084,7 +1180,7 @@ private:
 			vk::DescriptorPoolSize(vk::DescriptorType::eUniformBuffer,
 								   MAX_FRAMES_IN_FLIGHT),
 			vk::DescriptorPoolSize(vk::DescriptorType::eCombinedImageSampler,
-								   MAX_FRAMES_IN_FLIGHT)};
+								   MAX_FRAMES_IN_FLIGHT * 2)}; // binding 1 (texture) + binding 2 (shadow map)
 		vk::DescriptorPoolCreateInfo poolInfo{
 			.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
 			.maxSets = MAX_FRAMES_IN_FLIGHT,
@@ -1116,6 +1212,10 @@ private:
 				.sampler = textureSampler,
 				.imageView = textureImageView,
 				.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal};
+			vk::DescriptorImageInfo shadowMapInfo{
+				.sampler = shadowMapSampler,
+				.imageView = shadowMapImageView,
+				.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal};
 			std::array descriptorWrites{
 				vk::WriteDescriptorSet{.dstSet = descriptorSets[i],
 									   .dstBinding = 0,
@@ -1130,7 +1230,14 @@ private:
 									   .descriptorCount = 1,
 									   .descriptorType =
 										   vk::DescriptorType::eCombinedImageSampler,
-									   .pImageInfo = &imageInfo}};
+									   .pImageInfo = &imageInfo},
+				vk::WriteDescriptorSet{.dstSet = descriptorSets[i],
+									   .dstBinding = 2,
+									   .dstArrayElement = 0,
+									   .descriptorCount = 1,
+									   .descriptorType =
+										   vk::DescriptorType::eCombinedImageSampler,
+									   .pImageInfo = &shadowMapInfo}};
 			vulkanDevice->getLogicalDevice().updateDescriptorSets(descriptorWrites, {});
 		}
 	}
@@ -1332,6 +1439,11 @@ private:
 		// Flip the scaling factor of the Y axis in the projection matrix
 		ubo.proj[1][1] *= -1;
 
+		glm::vec3 lightPos = -lightDir * 20.0f;
+		glm::mat4 lightView = glm::lookAt(lightPos, glm::vec3(0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+		glm::mat4 lightProj = glm::ortho(-10.f, 10.f, -10.f, 10.f, 0.1f, 50.f);
+		ubo.lightSpaceMatrix = lightProj * lightView;
+
 		memcpy(uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
 	}
 
@@ -1349,6 +1461,57 @@ private:
 	{
 		auto &commandBuffer = commandBuffers[frameIndex];
 		commandBuffer.begin({});
+
+		// ---- Shadow pass ----
+		// Transition shadow map to depth attachment for writing
+		transition_image_layout(*shadowMapImage,
+			vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthAttachmentOptimal,
+			vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
+			vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
+			vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
+			vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
+			vk::ImageAspectFlagBits::eDepth);
+
+		vk::ClearValue shadowClear = vk::ClearDepthStencilValue(1.0f, 0);
+		vk::RenderingAttachmentInfo shadowDepthAttachment{
+			.imageView = *shadowMapImageView,
+			.imageLayout = vk::ImageLayout::eDepthAttachmentOptimal,
+			.loadOp = vk::AttachmentLoadOp::eClear,
+			.storeOp = vk::AttachmentStoreOp::eStore, // must store — read by main pass
+			.clearValue = shadowClear};
+		vk::RenderingInfo shadowRenderingInfo{
+			.renderArea = {{0, 0}, {SHADOW_MAP_SIZE, SHADOW_MAP_SIZE}},
+			.layerCount = 1,
+			.pDepthAttachment = &shadowDepthAttachment};
+
+		commandBuffer.beginRendering(shadowRenderingInfo);
+		commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *shadowPipeline);
+		commandBuffers[frameIndex].bindDescriptorSets(
+			vk::PipelineBindPoint::eGraphics, pipelineLayout, 0,
+			*descriptorSets[frameIndex], nullptr);
+		for (const auto &r : renderables) {
+			commandBuffer.pushConstants2(
+				vk::PushConstantsInfo{}
+					.setLayout(*pipelineLayout)
+					.setStageFlags(vk::ShaderStageFlagBits::eVertex)
+					.setOffset(0)
+					.setSize(sizeof(glm::mat4))
+					.setPValues(&r.modelMatrix));
+			commandBuffer.bindVertexBuffers(0, *r.vertexBuffer, {0});
+			commandBuffer.bindIndexBuffer(*r.indexBuffer, 0, vk::IndexType::eUint32);
+			commandBuffer.drawIndexed(r.indexCount, 1, 0, 0, 0);
+		}
+		commandBuffer.endRendering();
+
+		// Barrier: shadow map depth attachment → shader read for main pass
+		transition_image_layout(*shadowMapImage,
+			vk::ImageLayout::eDepthAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal,
+			vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
+			vk::AccessFlagBits2::eShaderRead,
+			vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
+			vk::PipelineStageFlagBits2::eFragmentShader,
+			vk::ImageAspectFlagBits::eDepth);
+		// ---- End shadow pass ----
 
 		bool msaaEnabled = msaaSamples != vk::SampleCountFlagBits::e1;
 
@@ -1607,8 +1770,13 @@ private:
 		presentCompleteSemaphores.clear();
 		commandBuffers.clear();
 		commandPool = nullptr;
+		shadowPipeline = nullptr;
 		graphicsPipeline = nullptr;
 		pipelineLayout = nullptr;
+		shadowMapSampler = nullptr;
+		shadowMapImageView = nullptr;
+		shadowMapImage = nullptr;
+		shadowMapImageMemory = nullptr;
 		textureSampler = nullptr;
 		textureImageView = nullptr;
 		textureImage = nullptr;

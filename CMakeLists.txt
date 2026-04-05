@@ -43,18 +43,33 @@ add_library(Vulkan::cppm ALIAS VulkanCppModule)
 
 # Compile Slang shaders -> SPIR-V at build time
 add_custom_command(
-    OUTPUT ${CMAKE_BINARY_DIR}/shaders/slang.spv
+    OUTPUT ${CMAKE_BINARY_DIR}/shaders/scene.spv
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/shaders
     COMMAND ${SLANGC_EXECUTABLE}
-        ${CMAKE_SOURCE_DIR}/src/shaders/shader.slang
+        ${CMAKE_SOURCE_DIR}/src/shaders/scene.slang
         -target spirv -profile spirv_1_4 -emit-spirv-directly -fvk-use-entrypoint-name
         -entry vertMain -entry fragMain
-        -o ${CMAKE_BINARY_DIR}/shaders/slang.spv
-    DEPENDS ${CMAKE_SOURCE_DIR}/src/shaders/shader.slang
-    COMMENT "Compiling Slang shaders"
+        -o ${CMAKE_BINARY_DIR}/shaders/scene.spv
+    DEPENDS ${CMAKE_SOURCE_DIR}/src/shaders/scene.slang
+    COMMENT "Compiling scene shaders"
     VERBATIM
 )
-add_custom_target(shaders DEPENDS ${CMAKE_BINARY_DIR}/shaders/slang.spv)
+add_custom_command(
+    OUTPUT ${CMAKE_BINARY_DIR}/shaders/shadow.spv
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/shaders
+    COMMAND ${SLANGC_EXECUTABLE}
+        ${CMAKE_SOURCE_DIR}/src/shaders/shadow.slang
+        -target spirv -profile spirv_1_4 -emit-spirv-directly -fvk-use-entrypoint-name
+        -entry vertMain
+        -o ${CMAKE_BINARY_DIR}/shaders/shadow.spv
+    DEPENDS ${CMAKE_SOURCE_DIR}/src/shaders/shadow.slang
+    COMMENT "Compiling shadow shaders"
+    VERBATIM
+)
+add_custom_target(shaders DEPENDS
+    ${CMAKE_BINARY_DIR}/shaders/scene.spv
+    ${CMAKE_BINARY_DIR}/shaders/shadow.spv
+)
 
 # Copy textures and models to build directory at configure time
 file(COPY ${CMAKE_SOURCE_DIR}/assets/textures DESTINATION ${CMAKE_BINARY_DIR})
