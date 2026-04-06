@@ -60,6 +60,21 @@ cmake --build _build
 cd _build && ./main
 ```
 
+
+## Current state
+
+<div align="center">
+  <img src="./media/shadow_maps.gif" alt="Shadow Maps" width="80%" />
+</div>
+
+- JSON scene descriptor (color, size per object)
+- Multisampling, mipmapping
+- Shadow mapping (depth pass with a dedicated pipeline) 
+- Diffuse and ambient lighting with normals
+- Light orbiting via keyboard commands
+- Dear ImGui integration
+- Will try to abstract and reorganize a bit more, currently only abstracted Device and Swapchain.
+
 ---
 
 ## On the graphics pipeline
