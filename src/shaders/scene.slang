@@ -17,6 +17,7 @@ ConstantBuffer<UniformBuffer> ubo;
 
 struct PushConstants {
     float4x4 model;
+    uint32_t textureIndex;
 };
 [[vk::push_constant]] PushConstants push;
 
@@ -43,7 +44,7 @@ VSOutput vertMain(VSInput input) {
     return output;
 }
 
-[[vk::binding(1, 0)]] Sampler2D texture;
+[[vk::binding(1, 0)]] Sampler2D textures[];
 [[vk::binding(2, 0)]] Sampler2DShadow shadowMap;
 
 [shader("fragment")]
@@ -79,7 +80,11 @@ float4 fragMain(VSOutput vertIn) : SV_TARGET {
                    ? pow(max(dot(viewDir, reflDir), 0.0), shininess) * specStrength
                    : 0.0;
 
-    float3 color = vertIn.fragColor * (ambient + (1.0 - ambient) * diffuse * shadow)
+    float3 texColor = (push.textureIndex == 0xFFFFu)
+                    ? float3(1.0, 1.0, 1.0)
+                    : textures[NonUniformResourceIndex(push.textureIndex)].Sample(vertIn.fragTexCoord).rgb;
+    float3 baseColor = vertIn.fragColor * texColor;
+    float3 color = baseColor * (ambient + (1.0 - ambient) * diffuse * shadow)
                  + specular * shadow;
     return float4(color, 1.0);
 }

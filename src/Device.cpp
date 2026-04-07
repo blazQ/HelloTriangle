@@ -162,6 +162,7 @@ void Device::createLogicalDevice()
     // query for Vulkan 1.3 features
     vk::StructureChain<vk::PhysicalDeviceFeatures2,
                        vk::PhysicalDeviceVulkan11Features,
+                       vk::PhysicalDeviceVulkan12Features,
                        vk::PhysicalDeviceVulkan13Features,
                        vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>
         featureChain = {
@@ -169,6 +170,9 @@ void Device::createLogicalDevice()
                               true}}, // vk::PhysicalDeviceFeatures2
             {.shaderDrawParameters =
                  true}, // vk::PhysicalDeviceVulkan11Features
+            {.shaderSampledImageArrayNonUniformIndexing = true,
+             .descriptorBindingPartiallyBound = true,
+             .runtimeDescriptorArray = true}, // vk::PhysicalDeviceVulkan12Features
             {.synchronization2 = true,
              .dynamicRendering = true}, // vk::PhysicalDeviceVulkan13Features
             {.extendedDynamicState =
@@ -227,9 +231,15 @@ bool Device::isDeviceSuitable(const vk::raii::PhysicalDevice &device)
 
     // Check if the physicalDevice supports the required features
     auto features = device.template getFeatures2<
-        vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan13Features,
+        vk::PhysicalDeviceFeatures2,
+        vk::PhysicalDeviceVulkan12Features,
+        vk::PhysicalDeviceVulkan13Features,
         vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
     bool supportsRequiredFeatures =
+        features.template get<vk::PhysicalDeviceVulkan12Features>()
+            .runtimeDescriptorArray &&
+        features.template get<vk::PhysicalDeviceVulkan12Features>()
+            .descriptorBindingPartiallyBound &&
         features.template get<vk::PhysicalDeviceVulkan13Features>()
             .dynamicRendering &&
         features

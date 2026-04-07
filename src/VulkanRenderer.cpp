@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <limits>
+#include <optional>
 
 #include <nlohmann/json.hpp>
 #include "imgui.h"
@@ -17,7 +18,6 @@
 constexpr uint32_t WIDTH = 800;
 constexpr uint32_t HEIGHT = 600;
 constexpr int MAX_FRAMES_IN_FLIGHT = 2;
-const std::string TEXTURE_PATH = "textures/viking_room.png";
 const std::string SCENE_PATH = "scenes/scene.json";
 
 vk::VertexInputBindingDescription VulkanRenderer::getVertexBindingDescription()
@@ -39,7 +39,17 @@ void VulkanRenderer::run()
 	initWindow();
 	initVulkan();
 	imGuiInit();
-	mainLoop();
+	try
+	{
+		mainLoop();
+	}
+	catch (...)
+	{
+		// Ensure Vulkan objects are destroyed in the correct order even when
+		// mainLoop exits via an exception, before the exception propagates.
+		cleanup();
+		throw;
+	}
 	cleanup();
 }
 
@@ -79,6 +89,11 @@ void VulkanRenderer::initVulkan()
 	msaaSamples = vulkanDevice->getMsaaSamples();
 	pendingMsaaSamples = msaaSamples;
 	swapchain = std::make_unique<Swapchain>(*vulkanDevice, window, pendingPresentMode);
+	// Sync pendingPresentMode to the mode the swapchain actually chose.
+	// If the hardware/compositor doesn't support the preferred mode, the
+	// swapchain falls back silently. Without this, drawFrame would call
+	// recreateSwapChain every single frame.
+	pendingPresentMode = swapchain->getPresentMode();
 	createDescriptorSetLayout();
 	createGraphicsPipeline();
 	createShadowPipeline();
@@ -87,9 +102,6 @@ void VulkanRenderer::initVulkan()
 	createDepthResources();
 	createShadowMapResources();
 	createShadowMapSampler();
-	createTextureImage();
-	createTextureImageView();
-	createTextureSampler();
 	loadScene();
 	createUniformBuffers();
 	createDescriptorPool();
@@ -100,18 +112,32 @@ void VulkanRenderer::initVulkan()
 
 void VulkanRenderer::createDescriptorSetLayout()
 {
-	std::array bindings = {vk::DescriptorSetLayoutBinding(
-							   0, vk::DescriptorType::eUniformBuffer, 1,
-							   vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, nullptr),
-						   vk::DescriptorSetLayoutBinding(
-							   1, vk::DescriptorType::eCombinedImageSampler, 1,
-							   vk::ShaderStageFlagBits::eFragment, nullptr),
-						   vk::DescriptorSetLayoutBinding(
-							   2, vk::DescriptorType::eCombinedImageSampler, 1,
-							   vk::ShaderStageFlagBits::eFragment, nullptr)};
+	std::array bindings = {
+		vk::DescriptorSetLayoutBinding(
+			0, vk::DescriptorType::eUniformBuffer, 1,
+			vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, nullptr),
+		// Binding 1: bindless texture array. PARTIALLY_BOUND means we only
+		// need to fill slots we actually use — the rest can stay empty.
+		vk::DescriptorSetLayoutBinding(
+			1, vk::DescriptorType::eCombinedImageSampler, MAX_TEXTURES,
+			vk::ShaderStageFlagBits::eFragment, nullptr),
+		vk::DescriptorSetLayoutBinding(
+			2, vk::DescriptorType::eCombinedImageSampler, 1,
+			vk::ShaderStageFlagBits::eFragment, nullptr)};
+
+	std::array<vk::DescriptorBindingFlags, 3> bindingFlags = {
+		vk::DescriptorBindingFlags{},                          // binding 0: UBO, no special flags
+		vk::DescriptorBindingFlagBits::ePartiallyBound,        // binding 1: texture array
+		vk::DescriptorBindingFlags{}};                         // binding 2: shadow map
+
+	vk::DescriptorSetLayoutBindingFlagsCreateInfo bindingFlagsInfo{
+		.bindingCount = static_cast<uint32_t>(bindingFlags.size()),
+		.pBindingFlags = bindingFlags.data()};
 
 	vk::DescriptorSetLayoutCreateInfo layoutInfo{
-		.bindingCount = bindings.size(), .pBindings = bindings.data()};
+		.pNext = &bindingFlagsInfo,
+		.bindingCount = static_cast<uint32_t>(bindings.size()),
+		.pBindings = bindings.data()};
 	descriptorSetLayout = vk::raii::DescriptorSetLayout(vulkanDevice->getLogicalDevice(), layoutInfo);
 }
 
@@ -181,9 +207,9 @@ void VulkanRenderer::createGraphicsPipeline()
 		.attachmentCount = 1,
 		.pAttachments = &colorBlendAttachment};
 	vk::PushConstantRange pushConstantRange{
-		.stageFlags = vk::ShaderStageFlagBits::eVertex,
+		.stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment,
 		.offset = 0,
-		.size = sizeof(glm::mat4)};
+		.size = sizeof(PushConstants)};
 	vk::PipelineLayoutCreateInfo pipelineLayoutInfo{
 		.setLayoutCount = 1,
 		.pSetLayouts = &*descriptorSetLayout,
@@ -433,15 +459,19 @@ void VulkanRenderer::createImage(uint32_t width, uint32_t height, uint32_t mipLe
 		.sharingMode = vk::SharingMode::eExclusive,
 	};
 
-	image = vk::raii::Image(vulkanDevice->getLogicalDevice(), imageInfo);
-
-	vk::MemoryRequirements memRequirements = image.getMemoryRequirements();
+	// Use locals so that if allocateMemory throws, the new VkImage is destroyed
+	// by its local RAII destructor and the output params are left unchanged.
+	vk::raii::Image newImage(vulkanDevice->getLogicalDevice(), imageInfo);
+	vk::MemoryRequirements memRequirements = newImage.getMemoryRequirements();
 	vk::MemoryAllocateInfo allocInfo{
 		.allocationSize = memRequirements.size,
 		.memoryTypeIndex =
 			vulkanDevice->findMemoryType(memRequirements.memoryTypeBits, properties)};
-	imageMemory = vk::raii::DeviceMemory(vulkanDevice->getLogicalDevice(), allocInfo);
-	image.bindMemory(imageMemory, 0);
+	vk::raii::DeviceMemory newMemory(vulkanDevice->getLogicalDevice(), allocInfo);
+	newImage.bindMemory(newMemory, 0);
+
+	image = std::move(newImage);
+	imageMemory = std::move(newMemory);
 }
 
 void VulkanRenderer::createBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage,
@@ -452,14 +482,17 @@ void VulkanRenderer::createBuffer(vk::DeviceSize size, vk::BufferUsageFlags usag
 	vk::BufferCreateInfo bufferInfo{.size = size,
 									.usage = usage,
 									.sharingMode = vk::SharingMode::eExclusive};
-	buffer = vk::raii::Buffer(vulkanDevice->getLogicalDevice(), bufferInfo);
-	vk::MemoryRequirements memRequirements = buffer.getMemoryRequirements();
+	vk::raii::Buffer newBuffer(vulkanDevice->getLogicalDevice(), bufferInfo);
+	vk::MemoryRequirements memRequirements = newBuffer.getMemoryRequirements();
 	vk::MemoryAllocateInfo memoryAllocateInfo{
 		.allocationSize = memRequirements.size,
 		.memoryTypeIndex =
 			vulkanDevice->findMemoryType(memRequirements.memoryTypeBits, properties)};
-	bufferMemory = vk::raii::DeviceMemory(vulkanDevice->getLogicalDevice(), memoryAllocateInfo);
-	buffer.bindMemory(*bufferMemory, 0);
+	vk::raii::DeviceMemory newMemory(vulkanDevice->getLogicalDevice(), memoryAllocateInfo);
+	newBuffer.bindMemory(*newMemory, 0);
+
+	buffer = std::move(newBuffer);
+	bufferMemory = std::move(newMemory);
 }
 
 // One-time-submit command buffer for load-time upload operations.
@@ -558,7 +591,7 @@ void VulkanRenderer::transitionImageLayout(const vk::raii::Image &image,
 		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 		.image = *image,
-		.subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, mipLevels, 0,
+		.subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, vk::RemainingMipLevels, 0,
 							 1}};
 
 	vk::DependencyInfo dependencyInfo{.imageMemoryBarrierCount = 1,
@@ -568,25 +601,27 @@ void VulkanRenderer::transitionImageLayout(const vk::raii::Image &image,
 	endSingleTimeCommands(*commandBuffer);
 }
 
-void VulkanRenderer::createTextureImage()
+// Loads a texture from disk, uploads it to the GPU, creates a view and sampler,
+// appends it to the global textures array, and returns its index. Returns the
+// cached index immediately if the same path was already loaded.
+uint32_t VulkanRenderer::loadTexture(const std::string &path)
 {
+	auto it = textureCache.find(path);
+	if (it != textureCache.end())
+		return it->second;
+
 	int texWidth, texHeight, texChannels;
-	stbi_uc *pixels = stbi_load(TEXTURE_PATH.c_str(), &texWidth, &texHeight,
+	stbi_uc *pixels = stbi_load(path.c_str(), &texWidth, &texHeight,
 								&texChannels, STBI_rgb_alpha);
-	vk::DeviceSize imageSize = texWidth * texHeight * 4;
-
-	mipLevels = static_cast<uint32_t>(
-					std::floor(std::log2(std::max(texWidth, texHeight)))) +
-				1;
-
 	if (!pixels)
-	{
-		throw std::runtime_error("failed to load texture image!");
-	}
+		throw std::runtime_error("failed to load texture: " + path);
+
+	uint32_t mipLevels = static_cast<uint32_t>(
+		std::floor(std::log2(std::max(texWidth, texHeight)))) + 1;
+	vk::DeviceSize imageSize = texWidth * texHeight * 4;
 
 	vk::raii::Buffer stagingBuffer({});
 	vk::raii::DeviceMemory stagingBufferMemory({});
-
 	createBuffer(imageSize, vk::BufferUsageFlagBits::eTransferSrc,
 				 vk::MemoryPropertyFlagBits::eHostVisible |
 					 vk::MemoryPropertyFlagBits::eHostCoherent,
@@ -594,22 +629,45 @@ void VulkanRenderer::createTextureImage()
 	void *data = stagingBufferMemory.mapMemory(0, imageSize);
 	memcpy(data, pixels, imageSize);
 	stagingBufferMemory.unmapMemory();
-
 	stbi_image_free(pixels);
+
+	Texture tex;
 	createImage(texWidth, texHeight, mipLevels, vk::SampleCountFlagBits::e1,
 				vk::Format::eR8G8B8A8Srgb, vk::ImageTiling::eOptimal,
 				vk::ImageUsageFlagBits::eTransferSrc |
 					vk::ImageUsageFlagBits::eTransferDst |
 					vk::ImageUsageFlagBits::eSampled,
-				vk::MemoryPropertyFlagBits::eDeviceLocal, textureImage,
-				textureImageMemory);
-	transitionImageLayout(textureImage, vk::ImageLayout::eUndefined,
+				vk::MemoryPropertyFlagBits::eDeviceLocal, tex.image, tex.memory);
+	transitionImageLayout(tex.image, vk::ImageLayout::eUndefined,
 						  vk::ImageLayout::eTransferDstOptimal);
-	copyBufferToImage(stagingBuffer, textureImage,
+	copyBufferToImage(stagingBuffer, tex.image,
 					  static_cast<uint32_t>(texWidth),
 					  static_cast<uint32_t>(texHeight));
-	generateMipmaps(textureImage, vk::Format::eR8G8B8A8Srgb, texWidth,
-					texHeight, mipLevels);
+	generateMipmaps(tex.image, vk::Format::eR8G8B8A8Srgb, texWidth, texHeight, mipLevels);
+
+	tex.view = vulkanDevice->createImageView(*tex.image, vk::Format::eR8G8B8A8Srgb,
+											 vk::ImageAspectFlagBits::eColor, mipLevels);
+
+	vk::PhysicalDeviceProperties props = vulkanDevice->getPhysicalDevice().getProperties();
+	vk::SamplerCreateInfo samplerInfo{
+		.magFilter               = vk::Filter::eLinear,
+		.minFilter               = vk::Filter::eLinear,
+		.mipmapMode              = vk::SamplerMipmapMode::eLinear,
+		.addressModeU            = vk::SamplerAddressMode::eRepeat,
+		.addressModeV            = vk::SamplerAddressMode::eRepeat,
+		.addressModeW            = vk::SamplerAddressMode::eRepeat,
+		.anisotropyEnable        = vk::True,
+		.maxAnisotropy           = props.limits.maxSamplerAnisotropy,
+		.compareOp               = vk::CompareOp::eAlways,
+		.maxLod                  = vk::LodClampNone,
+		.borderColor             = vk::BorderColor::eIntOpaqueBlack,
+		.unnormalizedCoordinates = vk::False};
+	tex.sampler = vk::raii::Sampler(vulkanDevice->getLogicalDevice(), samplerInfo);
+
+	uint32_t index = static_cast<uint32_t>(textures.size());
+	textures.push_back(std::move(tex));
+	textureCache[path] = index;
+	return index;
 }
 
 // Generates all mip levels after mip 0 has been uploaded. For each level i:
@@ -701,35 +759,6 @@ void VulkanRenderer::generateMipmaps(vk::raii::Image &image, vk::Format imageFor
 	endSingleTimeCommands(*commandBuffer);
 }
 
-void VulkanRenderer::createTextureImageView()
-{
-	textureImageView =
-		vulkanDevice->createImageView(*textureImage, vk::Format::eR8G8B8A8Srgb,
-									  vk::ImageAspectFlagBits::eColor, mipLevels);
-}
-
-void VulkanRenderer::createTextureSampler()
-{
-	vk::PhysicalDeviceProperties properties = vulkanDevice->getPhysicalDevice().getProperties();
-	vk::SamplerCreateInfo samplerInfo{
-		.magFilter = vk::Filter::eLinear,
-		.minFilter = vk::Filter::eLinear,
-		.mipmapMode = vk::SamplerMipmapMode::eLinear,
-		.addressModeU = vk::SamplerAddressMode::eRepeat,
-		.addressModeV = vk::SamplerAddressMode::eRepeat,
-		.addressModeW = vk::SamplerAddressMode::eRepeat,
-		.mipLodBias = 0.0,
-		.anisotropyEnable = vk::True,
-		.maxAnisotropy = properties.limits.maxSamplerAnisotropy};
-	samplerInfo.borderColor = vk::BorderColor::eIntOpaqueBlack;
-	samplerInfo.unnormalizedCoordinates = vk::False;
-	samplerInfo.compareEnable = vk::False;
-	samplerInfo.compareOp = vk::CompareOp::eAlways;
-	samplerInfo.mipLodBias = 0.0f;
-	samplerInfo.minLod = 0.0f;
-	samplerInfo.maxLod = vk::LodClampNone;
-	textureSampler = vk::raii::Sampler(vulkanDevice->getLogicalDevice(), samplerInfo);
-}
 
 void VulkanRenderer::uploadRenderable(Renderable &r, const std::vector<Vertex> &verts,
 									  const std::vector<uint32_t> &idxs)
@@ -791,12 +820,34 @@ void VulkanRenderer::loadScene()
 							  ? glm::vec3{obj["color"][0], obj["color"][1], obj["color"][2]}
 							  : glm::vec3{1.0f, 1.0f, 1.0f};
 		float size = obj.value("size", 1.0f);
+		std::optional<std::string> texturePath = obj.contains("texture")
+			? std::optional<std::string>{obj["texture"].get<std::string>()}
+			: std::nullopt;
 
-		auto [verts, idxs] = (mesh == "cube") ? makeCube(color, size) : makePlane(color, size);
+		// Optional rotation (XYZ Euler angles, degrees) and uniform scale.
+		glm::vec3 rotDeg = obj.contains("rotation")
+							   ? glm::vec3{obj["rotation"][0], obj["rotation"][1], obj["rotation"][2]}
+							   : glm::vec3{0.0f};
+		float scale = obj.value("scale", 1.0f);
+
+		std::pair<std::vector<Vertex>, std::vector<uint32_t>> meshData;
+		if (mesh == "cube")
+			meshData = makeCube(color, size);
+		else if (mesh == "plane")
+			meshData = makePlane(color, size);
+		else
+			meshData = loadOBJ(mesh);
+
+		glm::mat4 model = glm::translate(glm::mat4(1.0f), pos);
+		model = glm::rotate(model, glm::radians(rotDeg.x), glm::vec3(1, 0, 0));
+		model = glm::rotate(model, glm::radians(rotDeg.y), glm::vec3(0, 1, 0));
+		model = glm::rotate(model, glm::radians(rotDeg.z), glm::vec3(0, 0, 1));
+		model = glm::scale(model, glm::vec3(scale));
 
 		Renderable r;
-		r.modelMatrix = glm::translate(glm::mat4(1.0f), pos);
-		uploadRenderable(r, verts, idxs);
+		r.modelMatrix    = model;
+		r.textureIndex   = texturePath ? loadTexture(*texturePath) : 0xFFFFu;
+		uploadRenderable(r, meshData.first, meshData.second);
 		renderables.push_back(std::move(r));
 	}
 }
@@ -827,11 +878,13 @@ void VulkanRenderer::createUniformBuffers()
 
 void VulkanRenderer::createDescriptorPool()
 {
+	// Binding 1 holds up to MAX_TEXTURES samplers per set.
+	// Binding 2 holds 1 sampler (shadow map) per set.
 	std::array poolSize{
 		vk::DescriptorPoolSize(vk::DescriptorType::eUniformBuffer,
 							   MAX_FRAMES_IN_FLIGHT),
 		vk::DescriptorPoolSize(vk::DescriptorType::eCombinedImageSampler,
-							   MAX_FRAMES_IN_FLIGHT * 2)}; // binding 1 (texture) + binding 2 (shadow map)
+							   MAX_FRAMES_IN_FLIGHT * (MAX_TEXTURES + 1))};
 	vk::DescriptorPoolCreateInfo poolInfo{
 		.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
 		.maxSets = MAX_FRAMES_IN_FLIGHT,
@@ -851,41 +904,52 @@ void VulkanRenderer::createDescriptorSets()
 	descriptorSets.clear();
 	descriptorSets = vulkanDevice->getLogicalDevice().allocateDescriptorSets(allocInfo);
 
+	// Build one image-info entry per loaded texture. This vector is the same
+	// for every frame-in-flight since the texture data doesn't change.
+	std::vector<vk::DescriptorImageInfo> textureInfos;
+	for (const auto &tex : textures)
+	{
+		textureInfos.push_back({
+			.sampler     = *tex.sampler,
+			.imageView   = *tex.view,
+			.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal});
+	}
+
 	for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
 	{
 		vk::DescriptorBufferInfo bufferInfo{.buffer = uniformBuffers[i],
 											.offset = 0,
 											.range = sizeof(UniformBufferObject)};
-		vk::DescriptorImageInfo imageInfo{
-			.sampler = textureSampler,
-			.imageView = textureImageView,
-			.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal};
 		vk::DescriptorImageInfo shadowMapInfo{
-			.sampler = shadowMapSampler,
-			.imageView = shadowMapImageView,
+			.sampler     = *shadowMapSampler,
+			.imageView   = *shadowMapImageView,
 			.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal};
-		std::array descriptorWrites{
-			vk::WriteDescriptorSet{.dstSet = descriptorSets[i],
-								   .dstBinding = 0,
-								   .dstArrayElement = 0,
-								   .descriptorCount = 1,
-								   .descriptorType =
-									   vk::DescriptorType::eUniformBuffer,
-								   .pBufferInfo = &bufferInfo},
-			vk::WriteDescriptorSet{.dstSet = descriptorSets[i],
-								   .dstBinding = 1,
-								   .dstArrayElement = 0,
-								   .descriptorCount = 1,
-								   .descriptorType =
-									   vk::DescriptorType::eCombinedImageSampler,
-								   .pImageInfo = &imageInfo},
-			vk::WriteDescriptorSet{.dstSet = descriptorSets[i],
-								   .dstBinding = 2,
-								   .dstArrayElement = 0,
-								   .descriptorCount = 1,
-								   .descriptorType =
-									   vk::DescriptorType::eCombinedImageSampler,
-								   .pImageInfo = &shadowMapInfo}};
+
+		std::vector<vk::WriteDescriptorSet> descriptorWrites{
+			vk::WriteDescriptorSet{
+				.dstSet          = descriptorSets[i],
+				.dstBinding      = 0,
+				.dstArrayElement = 0,
+				.descriptorCount = 1,
+				.descriptorType  = vk::DescriptorType::eUniformBuffer,
+				.pBufferInfo     = &bufferInfo},
+			vk::WriteDescriptorSet{
+				.dstSet          = descriptorSets[i],
+				.dstBinding      = 2,
+				.dstArrayElement = 0,
+				.descriptorCount = 1,
+				.descriptorType  = vk::DescriptorType::eCombinedImageSampler,
+				.pImageInfo      = &shadowMapInfo}};
+		if (!textureInfos.empty())
+		{
+			descriptorWrites.push_back(vk::WriteDescriptorSet{
+				.dstSet          = descriptorSets[i],
+				.dstBinding      = 1,
+				.dstArrayElement = 0,
+				.descriptorCount = static_cast<uint32_t>(textureInfos.size()),
+				.descriptorType  = vk::DescriptorType::eCombinedImageSampler,
+				.pImageInfo      = textureInfos.data()});
+		}
 		vulkanDevice->getLogicalDevice().updateDescriptorSets(descriptorWrites, {});
 	}
 }
@@ -1088,13 +1152,14 @@ void VulkanRenderer::recordCommandBuffer(uint32_t imageIndex)
 		*descriptorSets[frameIndex], nullptr);
 	for (const auto &r : renderables)
 	{
+		PushConstants pc{r.modelMatrix, r.textureIndex};
 		commandBuffer.pushConstants2(
 			vk::PushConstantsInfo{}
 				.setLayout(*pipelineLayout)
-				.setStageFlags(vk::ShaderStageFlagBits::eVertex)
+				.setStageFlags(vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment)
 				.setOffset(0)
-				.setSize(sizeof(glm::mat4))
-				.setPValues(&r.modelMatrix));
+				.setSize(sizeof(PushConstants))
+				.setPValues(&pc));
 		commandBuffer.bindVertexBuffers(0, *r.vertexBuffer, {0});
 		commandBuffer.bindIndexBuffer(*r.indexBuffer, 0, vk::IndexType::eUint32);
 		commandBuffer.drawIndexed(r.indexCount, 1, 0, 0, 0);
@@ -1206,13 +1271,14 @@ void VulkanRenderer::recordCommandBuffer(uint32_t imageIndex)
 
 	for (const auto &r : renderables)
 	{
+		PushConstants pc{r.modelMatrix, r.textureIndex};
 		commandBuffer.pushConstants2(
 			vk::PushConstantsInfo{}
 				.setLayout(*pipelineLayout)
-				.setStageFlags(vk::ShaderStageFlagBits::eVertex)
+				.setStageFlags(vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment)
 				.setOffset(0)
-				.setSize(sizeof(glm::mat4))
-				.setPValues(&r.modelMatrix));
+				.setSize(sizeof(PushConstants))
+				.setPValues(&pc));
 		commandBuffer.bindVertexBuffers(0, *r.vertexBuffer, {0});
 		commandBuffer.bindIndexBuffer(*r.indexBuffer, 0, vk::IndexType::eUint32);
 		commandBuffer.drawIndexed(r.indexCount, 1, 0, 0, 0);
@@ -1356,10 +1422,8 @@ void VulkanRenderer::cleanup()
 	shadowMapImageView = nullptr;
 	shadowMapImage = nullptr;
 	shadowMapImageMemory = nullptr;
-	textureSampler = nullptr;
-	textureImageView = nullptr;
-	textureImage = nullptr;
-	textureImageMemory = nullptr;
+	textures.clear();
+	textureCache.clear();
 	descriptorSets.clear();
 	descriptorPool = nullptr;
 	imguiDescriptorPool = nullptr;
@@ -1395,7 +1459,7 @@ void VulkanRenderer::drawImGui()
 	ImGui::Text("Resolution: %ux%u", swapchain->getExtent().width,
 				swapchain->getExtent().height);
 	ImGui::Text("Device: %s", vulkanDevice->getPhysicalDevice().getProperties().deviceName.data());
-	ImGui::Text("Mip levels: %u", mipLevels);
+	ImGui::Text("Textures loaded: %u", static_cast<uint32_t>(textures.size()));
 
 	ImGui::Separator();
 

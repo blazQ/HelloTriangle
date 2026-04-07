@@ -8,6 +8,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
@@ -38,7 +39,17 @@ private:
     // Nested types
     // -------------------------------------------------------------------------
 
-    // GPU-side mesh instance: owns Vulkan buffers and a model matrix.
+    // GPU-side texture: owns the image, its memory, a view, and a sampler.
+    struct Texture
+    {
+        vk::raii::Image image = nullptr;
+        vk::raii::DeviceMemory memory = nullptr;
+        vk::raii::ImageView view = nullptr;
+        vk::raii::Sampler sampler = nullptr;
+    };
+
+    // GPU-side mesh instance: owns Vulkan buffers, a model matrix, and a
+    // texture index into the global bindless texture array.
     struct Renderable
     {
         vk::raii::Buffer vertexBuffer = nullptr;
@@ -47,6 +58,14 @@ private:
         vk::raii::DeviceMemory indexBufferMemory = nullptr;
         uint32_t indexCount = 0;
         glm::mat4 modelMatrix = glm::mat4(1.0f);
+        uint32_t textureIndex = 0;
+    };
+
+    // Push constants sent per draw call: model matrix + which texture to use.
+    struct PushConstants
+    {
+        glm::mat4 model;
+        uint32_t textureIndex;
     };
 
     // Data layout of the uniform buffer as the shader sees it.
@@ -94,12 +113,11 @@ private:
     vk::raii::DeviceMemory depthImageMemory = nullptr;
     vk::raii::ImageView depthImageView = nullptr;
 
-    // Texture
-    uint32_t mipLevels = 0;
-    vk::raii::Image textureImage = nullptr;
-    vk::raii::DeviceMemory textureImageMemory = nullptr;
-    vk::raii::ImageView textureImageView = nullptr;
-    vk::raii::Sampler textureSampler = nullptr;
+    // Bindless texture array — all loaded textures live here.
+    // Each Renderable holds an index into this vector.
+    static constexpr uint32_t MAX_TEXTURES = 64;
+    std::vector<Texture> textures;
+    std::unordered_map<std::string, uint32_t> textureCache;
 
     // Shadow map
     static constexpr uint32_t SHADOW_MAP_SIZE = 2048;
@@ -190,11 +208,9 @@ private:
                                vk::ImageLayout oldLayout, vk::ImageLayout newLayout);
 
     // Texture
-    void createTextureImage();
+    uint32_t loadTexture(const std::string &path);
     void generateMipmaps(vk::raii::Image &image, vk::Format imageFormat,
                          int32_t texWidth, int32_t texHeight, uint32_t mipLevels);
-    void createTextureImageView();
-    void createTextureSampler();
 
     // Scene
     void uploadRenderable(Renderable &r, const std::vector<Vertex> &verts,
