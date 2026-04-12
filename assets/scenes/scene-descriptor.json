@@ -26,7 +26,7 @@
 
     "objects": [
         {
-            "mesh":        "models/sponza.glb",
+            "mesh":        "scenes/sponza/sponza.glb",
             "yUpToZUp":   true,
             "position":    [0.0, 0.0, 0.0],
             "rotation":    [0.0, 0.0, 0.0]

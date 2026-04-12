@@ -47,7 +47,7 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/shaders
     COMMAND ${SLANGC_EXECUTABLE}
         ${CMAKE_SOURCE_DIR}/src/shaders/scene.slang
-        -target spirv -profile spirv_1_5 -emit-spirv-directly -fvk-use-entrypoint-name
+        -target spirv -profile spirv_1_6 -emit-spirv-directly -fvk-use-entrypoint-name
         -g0
         -capability spvImageQuery
         -capability spvShaderNonUniformEXT
@@ -56,6 +56,8 @@ add_custom_command(
         -capability spvSparseResidency
         -capability spvMinLod
         -capability spvFragmentFullyCoveredEXT
+        -capability SPV_KHR_non_semantic_info
+        -capability SPV_GOOGLE_user_type
         -entry vertMain -entry fragMain
         -o ${CMAKE_BINARY_DIR}/shaders/scene.spv
     DEPENDS ${CMAKE_SOURCE_DIR}/src/shaders/scene.slang

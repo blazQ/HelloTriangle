@@ -20,7 +20,7 @@
 constexpr uint32_t WIDTH = 800;
 constexpr uint32_t HEIGHT = 600;
 constexpr int MAX_FRAMES_IN_FLIGHT = 2;
-const std::string SCENE_PATH = "scenes/scene.json";
+const std::string SCENE_PATH = "scenes/scene-descriptor.json";
 
 vk::VertexInputBindingDescription VulkanRenderer::getVertexBindingDescription()
 {
@@ -748,6 +748,9 @@ void VulkanRenderer::transitionImageLayout(const vk::raii::Image &image,
 // cached index immediately if the same path was already loaded.
 uint32_t VulkanRenderer::loadTexture(const std::string &path, bool linearFormat)
 {
+	if (textures.size() >= MAX_TEXTURES)
+		throw std::runtime_error("texture limit reached");
+
 	auto it = textureCache.find(path);
 	if (it != textureCache.end())
 		return it->second;
@@ -817,6 +820,9 @@ uint32_t VulkanRenderer::loadTexture(const std::string &path, bool linearFormat)
 
 uint32_t VulkanRenderer::loadTextureFromMemory(const std::vector<uint8_t> &bytes, bool linearFormat)
 {
+	if (textures.size() >= MAX_TEXTURES)
+		throw std::runtime_error("texture limit reached");
+	
 	int texWidth, texHeight, texChannels;
 	stbi_uc *pixels = stbi_load_from_memory(bytes.data(),
 											static_cast<int>(bytes.size()),
@@ -1156,6 +1162,7 @@ void VulkanRenderer::loadScene()
 		uploadRenderable(r, meshData.first, meshData.second);
 		renderables.push_back(std::move(r));
 	}
+	printf("Loaded %zu unique textures\n", textures.size());
 }
 
 // Host-visible, persistently mapped — CPU writes UBO data each frame via the

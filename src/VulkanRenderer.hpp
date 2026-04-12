@@ -171,7 +171,7 @@ private:
 
     // Bindless texture array — all loaded textures live here.
     // Each Renderable holds an index into this vector.
-    static constexpr uint32_t MAX_TEXTURES = 512;
+    static constexpr uint32_t MAX_TEXTURES = 2048;
     std::vector<Texture> textures;
     std::unordered_map<std::string, uint32_t> textureCache;
 

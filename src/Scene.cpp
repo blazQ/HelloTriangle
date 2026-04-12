@@ -420,7 +420,7 @@ std::vector<GltfPrimitive> loadGLTF(const std::string &path, bool yUpToZUp)
     fastgltf::Parser parser;
     auto assetResult = parser.loadGltf(dataResult.get(),
                                        std::filesystem::path(path).parent_path(),
-                                       fastgltf::Options::LoadExternalImages);
+                                       fastgltf::Options::LoadExternalImages | fastgltf::Options::LoadExternalBuffers);
     if (assetResult.error() != fastgltf::Error::None)
         throw std::runtime_error("loadGLTF: parse failed for '" + path + "': " + std::string(fastgltf::getErrorMessage(assetResult.error())));
 
