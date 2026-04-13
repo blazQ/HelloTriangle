@@ -103,7 +103,7 @@ set(IMGUI_DIR ${CMAKE_SOURCE_DIR}/extern/imgui)
 
 add_subdirectory(extern/fastgltf)
 
-add_executable(main src/main.cpp src/VulkanRenderer.cpp src/Camera.cpp src/Scene.cpp src/Device.cpp src/Swapchain.cpp
+add_executable(main src/main.cpp src/VulkanRenderer.cpp src/Camera.cpp src/Scene.cpp src/Device.cpp src/Swapchain.cpp src/TextureManager.cpp src/ImGuiLayer.cpp src/SceneEditor.cpp
     ${IMGUI_DIR}/imgui.cpp
     ${IMGUI_DIR}/imgui_draw.cpp
     ${IMGUI_DIR}/imgui_tables.cpp

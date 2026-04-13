@@ -1,6 +1,7 @@
 #include "Device.hpp"
 #include <cstring>
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 
 Device::Device(GLFWwindow *window, std::vector<const char *> requiredDeviceExtensions, std::vector<const char *> validationLayers)
@@ -11,6 +12,7 @@ Device::Device(GLFWwindow *window, std::vector<const char *> requiredDeviceExten
     createSurface(window);
     pickPhysicalDevice();
     createLogicalDevice();
+    createUploadCommandPool();
 }
 
 vk::raii::Instance &Device::getInstance() { return instance; }
@@ -374,4 +376,156 @@ VKAPI_ATTR vk::Bool32 VKAPI_CALL Device::debugCallback(
         std::cerr << "validation layer: " << pCallbackData->pMessage << std::endl;
     }
     return vk::False;
+}
+
+// ─── GPU upload utilities ──────────────────────────────────────────────────
+
+// eTransient: hint to the driver that command buffers will be short-lived.
+void Device::createUploadCommandPool()
+{
+    vk::CommandPoolCreateInfo poolInfo{
+        .flags = vk::CommandPoolCreateFlagBits::eTransient,
+        .queueFamilyIndex = graphicsIndex};
+    uploadCommandPool_ = vk::raii::CommandPool(device, poolInfo);
+}
+
+void Device::createImage(uint32_t width, uint32_t height, uint32_t mipLevels,
+                          vk::SampleCountFlagBits numSamples, vk::Format format,
+                          vk::ImageTiling tiling, vk::ImageUsageFlags usage,
+                          vk::MemoryPropertyFlags properties,
+                          vk::raii::Image& image, vk::raii::DeviceMemory& imageMemory)
+{
+    vk::ImageCreateInfo imageInfo{
+        .imageType   = vk::ImageType::e2D,
+        .format      = format,
+        .extent      = {width, height, 1},
+        .mipLevels   = mipLevels,
+        .arrayLayers = 1,
+        .samples     = numSamples,
+        .tiling      = tiling,
+        .usage       = usage,
+        .sharingMode = vk::SharingMode::eExclusive,
+    };
+
+    // Use locals so that if allocateMemory throws, the new VkImage is destroyed
+    // by its local RAII destructor and the output params are left unchanged.
+    vk::raii::Image newImage(device, imageInfo);
+    vk::MemoryRequirements memReqs = newImage.getMemoryRequirements();
+    vk::MemoryAllocateInfo allocInfo{
+        .allocationSize  = memReqs.size,
+        .memoryTypeIndex = findMemoryType(memReqs.memoryTypeBits, properties)};
+    vk::raii::DeviceMemory newMemory(device, allocInfo);
+    newImage.bindMemory(newMemory, 0);
+
+    image       = std::move(newImage);
+    imageMemory = std::move(newMemory);
+}
+
+void Device::createBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage,
+                           vk::MemoryPropertyFlags properties,
+                           vk::raii::Buffer& buffer, vk::raii::DeviceMemory& bufferMemory)
+{
+    vk::BufferCreateInfo bufferInfo{
+        .size        = size,
+        .usage       = usage,
+        .sharingMode = vk::SharingMode::eExclusive};
+    vk::raii::Buffer newBuffer(device, bufferInfo);
+    vk::MemoryRequirements memReqs = newBuffer.getMemoryRequirements();
+    vk::MemoryAllocateInfo allocInfo{
+        .allocationSize  = memReqs.size,
+        .memoryTypeIndex = findMemoryType(memReqs.memoryTypeBits, properties)};
+    vk::raii::DeviceMemory newMemory(device, allocInfo);
+    newBuffer.bindMemory(*newMemory, 0);
+
+    buffer       = std::move(newBuffer);
+    bufferMemory = std::move(newMemory);
+}
+
+std::unique_ptr<vk::raii::CommandBuffer> Device::beginSingleTimeCommands()
+{
+    vk::CommandBufferAllocateInfo allocInfo{
+        .commandPool        = uploadCommandPool_,
+        .level              = vk::CommandBufferLevel::ePrimary,
+        .commandBufferCount = 1};
+    auto cmd = std::make_unique<vk::raii::CommandBuffer>(
+        std::move(vk::raii::CommandBuffers(device, allocInfo).front()));
+    cmd->begin(vk::CommandBufferBeginInfo{
+        .flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+    return cmd;
+}
+
+void Device::endSingleTimeCommands(vk::raii::CommandBuffer& cmd)
+{
+    cmd.end();
+    vk::SubmitInfo submitInfo{.commandBufferCount = 1, .pCommandBuffers = &*cmd};
+    queue.submit(submitInfo, nullptr);
+    queue.waitIdle();
+}
+
+void Device::copyBuffer(vk::raii::Buffer& src, vk::raii::Buffer& dst, vk::DeviceSize size)
+{
+    auto cmd = beginSingleTimeCommands();
+    cmd->copyBuffer(src, dst, vk::BufferCopy(0, 0, size));
+    endSingleTimeCommands(*cmd);
+}
+
+void Device::copyBufferToImage(const vk::raii::Buffer& buffer, vk::raii::Image& image,
+                                uint32_t width, uint32_t height)
+{
+    auto cmd = beginSingleTimeCommands();
+    vk::BufferImageCopy region{
+        .bufferOffset      = 0,
+        .bufferRowLength   = 0,
+        .bufferImageHeight = 0,
+        .imageSubresource  = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+        .imageOffset       = {0, 0, 0},
+        .imageExtent       = {width, height, 1}};
+    cmd->copyBufferToImage(buffer, image, vk::ImageLayout::eTransferDstOptimal, {region});
+    endSingleTimeCommands(*cmd);
+}
+
+void Device::transitionImageLayout(const vk::raii::Image& image,
+                                    vk::ImageLayout oldLayout, vk::ImageLayout newLayout)
+{
+    auto cmd = beginSingleTimeCommands();
+
+    vk::AccessFlags2        srcAccessMask, dstAccessMask;
+    vk::PipelineStageFlags2 srcStageMask,  dstStageMask;
+
+    if (oldLayout == vk::ImageLayout::eUndefined &&
+        newLayout == vk::ImageLayout::eTransferDstOptimal)
+    {
+        srcStageMask  = vk::PipelineStageFlagBits2::eTopOfPipe;
+        dstStageMask  = vk::PipelineStageFlagBits2::eTransfer;
+        dstAccessMask = vk::AccessFlagBits2::eTransferWrite;
+    }
+    else if (oldLayout == vk::ImageLayout::eTransferDstOptimal &&
+             newLayout == vk::ImageLayout::eShaderReadOnlyOptimal)
+    {
+        srcStageMask  = vk::PipelineStageFlagBits2::eTransfer;
+        srcAccessMask = vk::AccessFlagBits2::eTransferWrite;
+        dstStageMask  = vk::PipelineStageFlagBits2::eFragmentShader;
+        dstAccessMask = vk::AccessFlagBits2::eShaderRead;
+    }
+    else
+    {
+        throw std::runtime_error("unsupported layout transition");
+    }
+
+    vk::ImageMemoryBarrier2 barrier{
+        .srcStageMask        = srcStageMask,
+        .srcAccessMask       = srcAccessMask,
+        .dstStageMask        = dstStageMask,
+        .dstAccessMask       = dstAccessMask,
+        .oldLayout           = oldLayout,
+        .newLayout           = newLayout,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .image               = *image,
+        .subresourceRange    = {vk::ImageAspectFlagBits::eColor, 0,
+                                vk::RemainingMipLevels, 0, 1}};
+
+    cmd->pipelineBarrier2(
+        vk::DependencyInfo{.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &barrier});
+    endSingleTimeCommands(*cmd);
 }
