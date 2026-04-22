@@ -109,6 +109,7 @@ void VulkanRenderer::initVulkan()
     // --- Render attachments ---
     createColorResources();
     createDepthResources();
+    createNormalResources();
     createShadowMapResources();
     createShadowMapSampler();
 
@@ -216,10 +217,11 @@ void VulkanRenderer::createGraphicsPipeline()
         .blendEnable    = vk::False,
         .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
                           vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA};
+    std::array<vk::PipelineColorBlendAttachmentState, 2> blendAtts = {colorBlendAtt, colorBlendAtt};
     vk::PipelineColorBlendStateCreateInfo colorBlending{
         .logicOpEnable  = vk::False,
-        .attachmentCount= 1,
-        .pAttachments   = &colorBlendAtt};
+        .attachmentCount= uint32_t(blendAtts.size()),
+        .pAttachments   = blendAtts.data()};
     vk::PushConstantRange pushConstantRange{
         .stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment,
         .offset     = 0,
@@ -236,9 +238,14 @@ void VulkanRenderer::createGraphicsPipeline()
         .depthTestEnable  = vk::True,
         .depthWriteEnable = vk::True,
         .depthCompareOp   = vk::CompareOp::eLess};
+    
+    std::array<vk::Format, 2> colorFormats = {
+        swapchain->getSurfaceFormat().format,
+        vk::Format::eR8G8B8A8Unorm};
+
     vk::PipelineRenderingCreateInfo renderingInfo{
-        .colorAttachmentCount    = 1,
-        .pColorAttachmentFormats = &swapchain->getSurfaceFormat().format,
+        .colorAttachmentCount    = static_cast<uint32_t>(colorFormats.size()),
+        .pColorAttachmentFormats = colorFormats.data(),
         .depthAttachmentFormat   = depthFmt};
 
     vk::GraphicsPipelineCreateInfo pipelineInfo{
@@ -373,17 +380,21 @@ void VulkanRenderer::createSkyPipeline()
         .blendEnable    = vk::False,
         .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
                           vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA};
+    std::array<vk::PipelineColorBlendAttachmentState, 2> blendAtts = {colorBlendAtt, colorBlendAtt};
     vk::PipelineColorBlendStateCreateInfo colorBlending{
-        .attachmentCount = 1, .pAttachments = &colorBlendAtt};
+        .attachmentCount = uint32_t(blendAtts.size()), .pAttachments = blendAtts.data()};
     vk::PipelineDepthStencilStateCreateInfo depthStencil{
         .depthTestEnable  = vk::True,
         .depthWriteEnable = vk::False,
         .depthCompareOp   = vk::CompareOp::eLessOrEqual};
 
     vk::Format depthFmt = vulkanDevice->findDepthFormat();
+    std::array<vk::Format, 2> colorFormats = {
+        swapchain->getSurfaceFormat().format,
+        vk::Format::eR8G8B8A8Unorm};
     vk::PipelineRenderingCreateInfo renderingInfo{
-        .colorAttachmentCount    = 1,
-        .pColorAttachmentFormats = &swapchain->getSurfaceFormat().format,
+        .colorAttachmentCount    = uint32_t(colorFormats.size()),
+        .pColorAttachmentFormats = colorFormats.data(),
         .depthAttachmentFormat   = depthFmt};
 
     vk::GraphicsPipelineCreateInfo pipelineInfo{
@@ -498,6 +509,34 @@ void VulkanRenderer::createShadowMapResources()
         shadowMapImage, shadowMapImageMemory);
     shadowMapImageView = vulkanDevice->createImageView(
         shadowMapImage, depthFormat, vk::ImageAspectFlagBits::eDepth, 1);
+}
+
+void VulkanRenderer::createNormalResources()
+{
+    vk::Format normalFormat = vk::Format::eR8G8B8A8Unorm;
+    bool msaaEnabled = msaaSamples != vk::SampleCountFlagBits::e1;
+
+    vulkanDevice->createImage(
+        swapchain->getExtent().width, swapchain->getExtent().height,
+        1, msaaSamples, normalFormat, vk::ImageTiling::eOptimal,
+        vk::ImageUsageFlagBits::eColorAttachment |
+        (msaaEnabled ? vk::ImageUsageFlagBits{} : vk::ImageUsageFlagBits::eSampled),
+        vk::MemoryPropertyFlagBits::eDeviceLocal,
+        normalImage, normalImageMemory);
+    normalImageView = vulkanDevice->createImageView(
+        normalImage, normalFormat, vk::ImageAspectFlagBits::eColor, 1);
+
+    if (msaaEnabled)
+    {
+        vulkanDevice->createImage(
+            swapchain->getExtent().width, swapchain->getExtent().height,
+            1, vk::SampleCountFlagBits::e1, normalFormat, vk::ImageTiling::eOptimal,
+            vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
+            vk::MemoryPropertyFlagBits::eDeviceLocal,
+            normalResolveImage, normalResolveImageMemory);
+        normalResolveImageView = vulkanDevice->createImageView(
+            normalResolveImage, normalFormat, vk::ImageAspectFlagBits::eColor, 1);
+    }
 }
 
 void VulkanRenderer::createShadowMapSampler()
@@ -1094,6 +1133,20 @@ void VulkanRenderer::recordCommandBuffer(uint32_t imageIndex)
         vk::PipelineStageFlagBits2::eColorAttachmentOutput,
         vk::ImageAspectFlagBits::eColor);
 
+    recordImageBarrier(*normalImage,
+        vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal,
+        {}, vk::AccessFlagBits2::eColorAttachmentWrite,
+        vk::PipelineStageFlagBits2::eTopOfPipe,
+        vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+        vk::ImageAspectFlagBits::eColor);
+    if (msaaEnabled)
+        recordImageBarrier(*normalResolveImage,
+            vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal,
+            {}, vk::AccessFlagBits2::eColorAttachmentWrite,
+            vk::PipelineStageFlagBits2::eTopOfPipe,
+            vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+            vk::ImageAspectFlagBits::eColor);
+    
     recordImageBarrier(*depthImage,
         vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthAttachmentOptimal,
         vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
@@ -1124,17 +1177,37 @@ void VulkanRenderer::recordCommandBuffer(uint32_t imageIndex)
                 .clearValue  = clearColor};
 
     vk::RenderingAttachmentInfo depthAtt{
-        .imageView   = depthImageView,
+        .imageView   = *depthImageView,
         .imageLayout = vk::ImageLayout::eDepthAttachmentOptimal,
         .loadOp      = vk::AttachmentLoadOp::eClear,
         .storeOp     = vk::AttachmentStoreOp::eDontCare,
         .clearValue  = clearDepth};
 
+    vk::RenderingAttachmentInfo normalAtt =
+        msaaEnabled
+            ? vk::RenderingAttachmentInfo{
+                .imageView          = *normalImageView,
+                .imageLayout        = vk::ImageLayout::eColorAttachmentOptimal,
+                .resolveMode        = vk::ResolveModeFlagBits::eAverage,
+                .resolveImageView   = *normalResolveImageView,
+                .resolveImageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+                .loadOp             = vk::AttachmentLoadOp::eClear,
+                .storeOp            = vk::AttachmentStoreOp::eDontCare,
+                .clearValue         = clearColor}
+            : vk::RenderingAttachmentInfo{
+                .imageView   = *normalImageView,
+                .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+                .loadOp      = vk::AttachmentLoadOp::eClear,
+                .storeOp     = vk::AttachmentStoreOp::eStore,
+                .clearValue  = clearColor};
+
+    std::array<vk::RenderingAttachmentInfo, 2> attachments = {colorAtt, normalAtt};
+    
     cmd.beginRendering(vk::RenderingInfo{
         .renderArea           = {{0, 0}, swapchain->getExtent()},
         .layerCount           = 1,
-        .colorAttachmentCount = 1,
-        .pColorAttachments    = &colorAtt,
+        .colorAttachmentCount = uint32_t(attachments.size()),
+        .pColorAttachments    = attachments.data(),
         .pDepthAttachment     = &depthAtt});
 
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *graphicsPipeline);
@@ -1199,6 +1272,14 @@ void VulkanRenderer::recordCommandBuffer(uint32_t imageIndex)
         vk::PipelineStageFlagBits2::eBottomOfPipe,
         vk::ImageAspectFlagBits::eColor);
 
+    // Transition normal image (or its resolve) to shader-readable for the SSAO pass.
+    recordImageBarrier(msaaEnabled ? *normalResolveImage : *normalImage,
+        vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal,
+        vk::AccessFlagBits2::eColorAttachmentWrite, vk::AccessFlagBits2::eShaderRead,
+        vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+        vk::PipelineStageFlagBits2::eFragmentShader,
+        vk::ImageAspectFlagBits::eColor);
+
     cmd.end();
 }
 
@@ -1235,6 +1316,7 @@ void VulkanRenderer::recreateSwapChain()
         static_cast<uint32_t>(swapchain->getImages().size()));
     createDepthResources();
     createColorResources();
+    createNormalResources();
 }
 
 void VulkanRenderer::rebuildMsaa()
@@ -1256,6 +1338,12 @@ void VulkanRenderer::rebuildMsaa()
 
 void VulkanRenderer::cleanupSwapChain()
 {
+    normalResolveImageView   = nullptr;
+    normalResolveImage       = nullptr;
+    normalResolveImageMemory = nullptr;
+    normalImageView          = nullptr;
+    normalImage              = nullptr;
+    normalImageMemory        = nullptr;
     colorImageView  = nullptr;
     colorImage      = nullptr;
     colorImageMemory= nullptr;

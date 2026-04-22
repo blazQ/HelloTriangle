@@ -228,8 +228,14 @@ float3 PBR(float3 N, float3 V, float3 L,
     return (diffuse + specular) * radiance * NdotL;
 }
 
+struct FSOutput
+{
+    float4 color : SV_Target0;
+    float4 normal : SV_Target1;
+};
+
 [shader("fragment")]
-float4 fragMain(VSOutput vertIn) : SV_TARGET {
+FSOutput fragMain(VSOutput vertIn) {
     // --- Parallax Occlusion Mapping ---
     // Displace the UV before any texture sampling so all maps (albedo, normal, metallic)
     // show the same displaced surface. Only applied when a height map is bound.
@@ -377,5 +383,5 @@ float4 fragMain(VSOutput vertIn) : SV_TARGET {
     else
         color = clamp(color, 0.0f, 1.0f);
 
-    return float4(color, 1.0);
+    return FSOutput(float4(color, 1.0), float4(norm * 0.5 + 0.5, 1.0));
 }

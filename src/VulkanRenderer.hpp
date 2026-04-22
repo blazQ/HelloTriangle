@@ -124,6 +124,12 @@ private:
     vk::raii::Image        depthImage       = nullptr;
     vk::raii::DeviceMemory depthImageMemory = nullptr;
     vk::raii::ImageView    depthImageView   = nullptr;
+    vk::raii::Image        normalImage          = nullptr;
+    vk::raii::DeviceMemory normalImageMemory    = nullptr;
+    vk::raii::ImageView    normalImageView      = nullptr;
+    vk::raii::Image        normalResolveImage       = nullptr;
+    vk::raii::DeviceMemory normalResolveImageMemory = nullptr;
+    vk::raii::ImageView    normalResolveImageView   = nullptr;
 
     // Shadow map
     static constexpr uint32_t SHADOW_MAP_SIZE = 2048;
@@ -197,6 +203,7 @@ private:
     // Render attachments
     void createColorResources();
     void createDepthResources();
+    void createNormalResources();
     void createShadowMapResources();
     void createShadowMapSampler();
 
