@@ -2,7 +2,6 @@
 
 #include <stdexcept>
 #include <filesystem>
-#include <unordered_map>
 #include <glm/gtc/constants.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -12,8 +11,6 @@
 #include <fastgltf/types.hpp>
 #include <fastgltf/tools.hpp>
 
-#define TINYOBJLOADER_IMPLEMENTATION
-#include <tiny_obj_loader.h>
 
 std::pair<std::vector<Vertex>, std::vector<uint32_t>> makeCube(glm::vec3 color, float size)
 {
@@ -141,112 +138,6 @@ std::pair<std::vector<Vertex>, std::vector<uint32_t>> makePlane(glm::vec3 color,
     };
     std::vector<uint32_t> idxs = {0, 1, 2, 0, 2, 3};
     return {verts, idxs};
-}
-
-std::pair<std::vector<Vertex>, std::vector<uint32_t>> loadOBJ(const std::filesystem::path &path, bool yUpToZUp)
-{
-    tinyobj::attrib_t attrib;
-    std::vector<tinyobj::shape_t> shapes;
-    std::vector<tinyobj::material_t> materials;
-    std::string warn, err;
-
-    if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, path.string().c_str()))
-        throw std::runtime_error("failed to load OBJ '" + path.string() + "': " + warn + err);
-
-    std::vector<Vertex> vertices;
-    std::vector<uint32_t> indices;
-    std::unordered_map<Vertex, uint32_t> uniqueVertices;
-
-    for (const auto &shape : shapes)
-    {
-        for (const auto &index : shape.mesh.indices)
-        {
-            Vertex v{};
-            v.pos = {
-                attrib.vertices[3 * index.vertex_index + 0],
-                attrib.vertices[3 * index.vertex_index + 1],
-                attrib.vertices[3 * index.vertex_index + 2],
-            };
-
-            if (yUpToZUp)
-            {
-                v.pos = {v.pos.x, -v.pos.z, v.pos.y};
-                v.normal = {v.normal.x, -v.normal.z, v.normal.y};
-                v.tangent = {v.tangent.x, -v.tangent.z, v.tangent.y, v.tangent.w};
-            }
-
-            v.color = {1.0f, 1.0f, 1.0f};
-            if (index.texcoord_index >= 0)
-            {
-                v.texCoord = {
-                    attrib.texcoords[2 * index.texcoord_index + 0],
-                    1.0f - attrib.texcoords[2 * index.texcoord_index + 1], // flip Y
-                };
-            }
-            if (index.normal_index >= 0)
-            {
-                v.normal = {
-                    attrib.normals[3 * index.normal_index + 0],
-                    attrib.normals[3 * index.normal_index + 1],
-                    attrib.normals[3 * index.normal_index + 2],
-                };
-            }
-            // tangent.w filled in during the tangent-generation pass below
-            v.tangent = {0.0f, 0.0f, 0.0f, 1.0f};
-
-            if (uniqueVertices.count(v) == 0)
-            {
-                uniqueVertices[v] = static_cast<uint32_t>(vertices.size());
-                vertices.push_back(v);
-            }
-            indices.push_back(uniqueVertices[v]);
-        }
-    }
-
-    // Compute tangents per triangle and accumulate into vertices.
-    // For each triangle we solve: deltaPos = deltaUV.x * T + deltaUV.y * B
-    // Isolating T gives the tangent direction for that triangle. Vertices shared
-    // by many triangles accumulate contributions that are normalised at the end.
-    std::vector<glm::vec3> tangentAccum(vertices.size(), glm::vec3(0.0f));
-    for (size_t i = 0; i + 2 < indices.size(); i += 3)
-    {
-        Vertex &v0 = vertices[indices[i]];
-        Vertex &v1 = vertices[indices[i + 1]];
-        Vertex &v2 = vertices[indices[i + 2]];
-
-        glm::vec3 edge1 = v1.pos - v0.pos;
-        glm::vec3 edge2 = v2.pos - v0.pos;
-        glm::vec2 dUV1 = v1.texCoord - v0.texCoord;
-        glm::vec2 dUV2 = v2.texCoord - v0.texCoord;
-
-        float det = dUV1.x * dUV2.y - dUV2.x * dUV1.y;
-        if (std::abs(det) < 1e-6f)
-            continue; // degenerate UV triangle, skip
-        float inv = 1.0f / det;
-
-        glm::vec3 tangent = inv * (dUV2.y * edge1 - dUV1.y * edge2);
-        tangentAccum[indices[i]] += tangent;
-        tangentAccum[indices[i + 1]] += tangent;
-        tangentAccum[indices[i + 2]] += tangent;
-    }
-
-    // Orthogonalise (Gram-Schmidt) and store with handedness sign in w.
-    for (size_t i = 0; i < vertices.size(); i++)
-    {
-        glm::vec3 n = vertices[i].normal;
-        glm::vec3 t = tangentAccum[i];
-        // Remove the component of t that is parallel to n, then normalise.
-        glm::vec3 ortho = glm::normalize(t - glm::dot(t, n) * n);
-        // The sign tells the shader which way the bitangent points.
-        // cross(n, t) should agree with the precomputed bitangent direction;
-        // if they oppose each other the sign is -1 (mirrored UV island).
-        // cross(n, t) gives the expected bitangent direction.
-        // If the accumulated tangent agrees with it, sign = +1; mirrored UV → -1.
-        float sign = (glm::dot(glm::cross(n, ortho), t) >= 0.0f) ? 1.0f : -1.0f;
-        vertices[i].tangent = glm::vec4(ortho, sign);
-    }
-
-    return {vertices, indices};
 }
 
 // ── glTF loader ──────────────────────────────────────────────────────────────

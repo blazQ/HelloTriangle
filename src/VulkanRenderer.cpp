@@ -677,37 +677,33 @@ void VulkanRenderer::loadScene()
         }
         else
         {
-            bool yUpToZUp = obj.value("yUpToZUp", false);
             auto ext = std::filesystem::path(mesh).extension();
-            if (ext == ".gltf" || ext == ".glb")
+            if (ext != ".gltf" && ext != ".glb")
+                throw std::runtime_error("unsupported mesh format '" + mesh + "' — only .gltf/.glb are supported");
+
+            bool yUpToZUp = obj.value("yUpToZUp", false);
+            glm::mat4 parentTransform = buildModelMatrix(pos, rotDeg, scale);
+            for (auto& prim : loadGLTF(assetPath(mesh), yUpToZUp))
             {
-                glm::mat4 parentTransform = buildModelMatrix(pos, rotDeg, scale);
-                for (auto& prim : loadGLTF(assetPath(mesh), yUpToZUp))
-                {
-                    auto resolveSlot = [&](const GltfImage& img, bool linear) -> uint32_t {
-                        if (!img.path.empty())   return textureManager_.load(img.path, linear);
-                        if (!img.bytes.empty())  return textureManager_.loadFromMemory(img.bytes, linear);
-                        return 0xFFFFu;
-                    };
-                    Renderable r;
-                    r.label                  = mesh;
-                    r.position               = pos;
-                    r.rotationDeg            = rotDeg;
-                    r.scale                  = scale;
-                    r.modelMatrix            = parentTransform * prim.transform;
-                    r.textureIndex           = resolveSlot(prim.baseColor,         false);
-                    r.normalMapIndex         = resolveSlot(prim.normalMap,         true);
-                    r.metallicRoughnessIndex = resolveSlot(prim.metallicRoughness, true);
-                    r.heightMapIndex         = 0xFFFFu;
-                    uploadRenderable(r, prim.vertices, prim.indices);
-                    renderables.push_back(std::move(r));
-                }
-                continue;
+                auto resolveSlot = [&](const GltfImage& img, bool linear) -> uint32_t {
+                    if (!img.path.empty())   return textureManager_.load(img.path, linear);
+                    if (!img.bytes.empty())  return textureManager_.loadFromMemory(img.bytes, linear);
+                    return 0xFFFFu;
+                };
+                Renderable r;
+                r.label                  = mesh;
+                r.position               = pos;
+                r.rotationDeg            = rotDeg;
+                r.scale                  = scale;
+                r.modelMatrix            = parentTransform * prim.transform;
+                r.textureIndex           = resolveSlot(prim.baseColor,         false);
+                r.normalMapIndex         = resolveSlot(prim.normalMap,         true);
+                r.metallicRoughnessIndex = resolveSlot(prim.metallicRoughness, true);
+                r.heightMapIndex         = 0xFFFFu;
+                uploadRenderable(r, prim.vertices, prim.indices);
+                renderables.push_back(std::move(r));
             }
-            else
-            {
-                meshData = loadOBJ(assetPath(mesh), yUpToZUp);
-            }
+            continue;
         }
 
         Renderable r;

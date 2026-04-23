@@ -13,7 +13,6 @@ find_package(glfw3 REQUIRED)
 find_package(glm REQUIRED)
 find_package(Vulkan 1.4.335 REQUIRED)
 find_path(STB_INCLUDEDIR stb_image.h PATH_SUFFIXES stb REQUIRED)
-find_path(TINYOBJ_INCLUDEDIR tiny_obj_loader.h REQUIRED)
 find_program(SLANGC_EXECUTABLE slangc HINTS $ENV{VULKAN_SDK}/bin REQUIRED)
 
 # Vulkan C++20 module wrapper (or a plain interface when the option is off)
@@ -116,7 +115,7 @@ set_target_properties(main PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 target_link_libraries(main PRIVATE Vulkan::cppm glfw fastgltf)
-target_include_directories(main PRIVATE ${STB_INCLUDEDIR} ${TINYOBJ_INCLUDEDIR} ${IMGUI_DIR} ${IMGUI_DIR}/backends
+target_include_directories(main PRIVATE ${STB_INCLUDEDIR} ${IMGUI_DIR} ${IMGUI_DIR}/backends
     ${CMAKE_SOURCE_DIR}/extern/nlohmann-json/include)
 target_compile_definitions(main PRIVATE
     VULKAN_HPP_HANDLE_ERROR_OUT_OF_DATE_AS_SUCCESS

@@ -20,7 +20,7 @@ The next steps, as of mid April 2026, are to write a comprehensive set of notes 
 
 - CMake 3.29+
 - [LunarG Vulkan SDK](https://vulkan.lunarg.com/sdk/home) 1.4.335+ — must be sourced before building (`source ~/VulkanSDK/<version>/setup-env.sh`)
-- GLFW3, GLM, STB
+- GLFW3, GLM, STB (`stb_image.h`)
 - `slangc` (Slang shader compiler)
 
 The Slang shared libraries (`libslang-compiler.so` etc.) must be on the system library path. If you installed `slangc` manually and only copied the binary, copy the accompanying `.so` files to `/usr/local/lib/` and run `sudo ldconfig`.
@@ -108,7 +108,6 @@ cmake --workflow --preset <name>
 - **JSON scene descriptor** — objects with mesh (`cube`, `plane`, `sphere`, or file path), position, rotation, scale, texture, specularMap, normalMap, heightMap, vertex color; skybox colors and point lights also declared in JSON
 - **Bindless texture array** — all textures in a single descriptor binding (`PARTIALLY_BOUND`), indexed via push constants; `0xFFFF` sentinel for "no texture"; up to 2048 slots
 - **Per-object transform editing** — position, rotation (XYZ Euler), uniform scale via ImGui drag sliders, model matrix rebuilt on change
-- **OBJ loading** — via tinyobjloader; tangent vectors computed per-triangle from UV deltas and accumulated + orthogonalised per vertex
 - **GLTF/GLB loading** — via fastgltf; reads all primitives with their per-mesh transforms; extracts baseColor, normalMap, and metallicRoughness textures; handles both external image files and embedded GLB buffers; optional Y-up to Z-up axis remap
 
 ### Camera & controls
