@@ -27,9 +27,9 @@ vk::SampleCountFlagBits Device::getMaxMsaaSamples() const { return maxMsaaSample
 vk::SampleCountFlags Device::getSupportedMsaaSamples() const { return supportedMsaaSamples; }
 
 void Device::createInstance()
-{
+{ 
     constexpr vk::ApplicationInfo appInfo{
-        .pApplicationName = "Hello Triangle",
+        .pApplicationName = "Blaz-Vulkan",
         .applicationVersion = VK_MAKE_VERSION(1, 0, 0),
         .pEngineName = "No Engine",
         .engineVersion = VK_MAKE_VERSION(1, 0, 0),

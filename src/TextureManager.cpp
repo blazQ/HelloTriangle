@@ -54,8 +54,11 @@ uint32_t TextureManager::loadFromMemory(const std::vector<uint8_t>& bytes, bool 
 
 uint32_t TextureManager::uploadPixels(const uint8_t* pixels, int w, int h, vk::Format fmt)
 {
+    // floor because the texture might not have max(w, h) that is a power of 2. In that case we floor and add 1
     uint32_t mipLevels = static_cast<uint32_t>(
         std::floor(std::log2(std::max(w, h)))) + 1;
+
+    // Times 4 because we have 4 color channels. TODO: Make this more meaningful instead of a magic constant
     vk::DeviceSize imageSize = static_cast<vk::DeviceSize>(w) * h * 4;
 
     // Stage on the CPU side.
@@ -131,6 +134,7 @@ void TextureManager::generateMipmaps(vk::raii::Image& image, vk::Format format,
 
     auto cmd = device_->beginSingleTimeCommands();
 
+    // Base struct for generating barriers for every mip level
     vk::ImageMemoryBarrier barrier{
         .srcAccessMask       = vk::AccessFlagBits::eTransferWrite,
         .dstAccessMask       = vk::AccessFlagBits::eTransferRead,
@@ -154,20 +158,27 @@ void TextureManager::generateMipmaps(vk::raii::Image& image, vk::Format format,
                              {}, {}, {}, barrier);
 
         vk::ArrayWrapper1D<vk::Offset3D, 2> srcOff, dstOff;
+        // Full resolution for the src image
         srcOff[0] = vk::Offset3D{0, 0, 0};
         srcOff[1] = vk::Offset3D{mipW, mipH, 1};
-        dstOff[0] = vk::Offset3D{0, 0, 0};
-        dstOff[1] = vk::Offset3D{mipW > 1 ? mipW / 2 : 1, mipH > 1 ? mipH / 2 : 1, 1};
 
+        // Full resolution for the dst image
+        dstOff[0] = vk::Offset3D{0, 0, 0};
+        dstOff[1] = vk::Offset3D{mipW > 1 ? mipW / 2 : 1, mipH > 1 ? mipH / 2 : 1, 1}; // Handling cases where w != h
+
+        // Blit = Block Image Transfer. It's an image copy with filtering and resizing.
         vk::ImageBlit blit{};
         blit.srcSubresource = {vk::ImageAspectFlagBits::eColor, i - 1, 0, 1};
         blit.srcOffsets     = srcOff;
         blit.dstSubresource = {vk::ImageAspectFlagBits::eColor, i,     0, 1};
         blit.dstOffsets     = dstOff;
+        // Blit command
         cmd->blitImage(image, vk::ImageLayout::eTransferSrcOptimal,
                        image, vk::ImageLayout::eTransferDstOptimal,
                        {blit}, vk::Filter::eLinear);
 
+        
+        // i-1 level is done, so it can become shaderreadonlyoptimal. i level will be i-1 at next iteration
         barrier.oldLayout     = vk::ImageLayout::eTransferSrcOptimal;
         barrier.newLayout     = vk::ImageLayout::eShaderReadOnlyOptimal;
         barrier.srcAccessMask = vk::AccessFlagBits::eTransferRead;

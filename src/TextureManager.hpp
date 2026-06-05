@@ -37,10 +37,11 @@ public:
 private:
     struct Texture
     {
-        vk::raii::Image        image  = nullptr;
-        vk::raii::DeviceMemory memory = nullptr;
-        vk::raii::ImageView    view   = nullptr;
-        vk::raii::Sampler      sampler= nullptr;
+        vk::raii::Image        image  = nullptr; // Raw pixel data in GPU memory. Multi-dimensional image and its mipmap levels.
+        vk::raii::DeviceMemory memory = nullptr; // Memory that holds the image.
+        vk::raii::ImageView    view   = nullptr; // Specifies which part of an image to use, which format and how to interpret data.
+        vk::raii::Sampler      sampler= nullptr; // How to sample the texture: nearest or linear, edge wrapping, anisotropy.
+        // TODO: The sampler could actually be just one global object.
     };
 
     Device* device_ = nullptr;

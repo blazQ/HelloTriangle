@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <assert.h>
 #include <chrono>
-#include <cmath>
 #include <filesystem>
 #include <limits>
 #include <optional>
@@ -11,7 +10,6 @@
 #include <nlohmann/json.hpp>
 
 #include "imgui.h"
-#include "imgui_impl_glfw.h"
 #include "imgui_impl_vulkan.h"
 
 #include "Renderable.hpp"
@@ -137,19 +135,18 @@ void VulkanRenderer::createDescriptorSetLayout()
     std::array bindings = {
         vk::DescriptorSetLayoutBinding(
             0, vk::DescriptorType::eUniformBuffer, 1,
-            vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, nullptr),
-        // Binding 1: bindless texture array. PARTIALLY_BOUND lets us leave
-        // unused slots empty — only accessed slots need to be written.
+            vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, nullptr), // Uniform Buffer Objects
         vk::DescriptorSetLayoutBinding(
             1, vk::DescriptorType::eCombinedImageSampler, TextureManager::MAX_TEXTURES,
-            vk::ShaderStageFlagBits::eFragment, nullptr),
+            vk::ShaderStageFlagBits::eFragment, nullptr), // Bindless Textures
         vk::DescriptorSetLayoutBinding(
             2, vk::DescriptorType::eCombinedImageSampler, 1,
-            vk::ShaderStageFlagBits::eFragment, nullptr)};
+            vk::ShaderStageFlagBits::eFragment, nullptr)}; // Shadow Map
 
+    // TODO: Smarter way to implement bindless resources tout-court instead of just on textures.
     std::array<vk::DescriptorBindingFlags, 3> bindingFlags = {
         vk::DescriptorBindingFlags{},
-        vk::DescriptorBindingFlagBits::ePartiallyBound,
+        vk::DescriptorBindingFlagBits::ePartiallyBound, // Enables us to leave unused slots empty
         vk::DescriptorBindingFlags{}};
 
     vk::DescriptorSetLayoutBindingFlagsCreateInfo bindingFlagsInfo{
@@ -195,7 +192,7 @@ void VulkanRenderer::createGraphicsPipeline()
 
     auto bindingDesc  = getVertexBindingDescription();
     auto attributeDesc = getVertexAttributeDescriptions();
-    vk::PipelineVertexInputStateCreateInfo vertexInputInfo{
+    vk::PipelineVertexInputStateCreateInfo vertexInputInfo{ // Input Assembler
         .vertexBindingDescriptionCount   = 1,
         .pVertexBindingDescriptions      = &bindingDesc,
         .vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDesc.size()),
@@ -204,7 +201,7 @@ void VulkanRenderer::createGraphicsPipeline()
     std::vector dynStates = {vk::DynamicState::eViewport, vk::DynamicState::eScissor};
     vk::PipelineDynamicStateCreateInfo dynamicState{
         .dynamicStateCount = static_cast<uint32_t>(dynStates.size()),
-        .pDynamicStates    = dynStates.data()};
+        .pDynamicStates    = dynStates.data()}; // Viewport and Scissor are marked as dynamic so the pipeline doesn't need recreation on resize
     vk::PipelineInputAssemblyStateCreateInfo inputAssembly{
         .topology = vk::PrimitiveTopology::eTriangleList};
     vk::PipelineViewportStateCreateInfo viewportState{

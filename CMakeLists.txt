@@ -11,6 +11,11 @@ endif()
 
 find_package(glfw3 REQUIRED)
 find_package(glm REQUIRED)
+
+if(DEFINED ENV{VULKAN_SDK})
+    file(REAL_PATH "$ENV{VULKAN_SDK}" _vulkan_sdk_real)
+    set(ENV{VULKAN_SDK} "${_vulkan_sdk_real}")
+endif()
 find_package(Vulkan 1.4.335 REQUIRED)
 find_path(STB_INCLUDEDIR stb_image.h PATH_SUFFIXES stb REQUIRED)
 find_program(SLANGC_EXECUTABLE slangc HINTS $ENV{VULKAN_SDK}/bin REQUIRED)
