@@ -1,14 +1,16 @@
 #pragma once
 
 #include "Device.hpp"
-#include <vector>
+
 #include <vulkan/vulkan_raii.hpp>
+
+#include <vector>
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
 class Swapchain
 {
-public:
+  public:
     Swapchain(Device& device, GLFWwindow* window, vk::PresentModeKHR preferredMode);
 
     vk::raii::SwapchainKHR& getSwapChain();
@@ -20,7 +22,7 @@ public:
 
     void recreate(GLFWwindow* window, vk::PresentModeKHR preferredMode);
 
-private:
+  private:
     Device& device;
     GLFWwindow* window;
     vk::raii::SwapchainKHR swapChain = nullptr;
@@ -34,7 +36,9 @@ private:
     void createImageViews();
 
     static uint32_t chooseSwapMinImageCount(vk::SurfaceCapabilitiesKHR const& surfaceCapabilities);
-    static vk::SurfaceFormatKHR chooseSwapSurfaceFormat(std::vector<vk::SurfaceFormatKHR> const& availableFormats);
-    static vk::PresentModeKHR chooseSwapPresentMode(std::vector<vk::PresentModeKHR> const& availablePresentModes);
+    static vk::SurfaceFormatKHR chooseSwapSurfaceFormat(
+        std::vector<vk::SurfaceFormatKHR> const& availableFormats);
+    static vk::PresentModeKHR chooseSwapPresentMode(
+        std::vector<vk::PresentModeKHR> const& availablePresentModes);
     vk::Extent2D chooseSwapExtent(vk::SurfaceCapabilitiesKHR const& capabilities);
 };

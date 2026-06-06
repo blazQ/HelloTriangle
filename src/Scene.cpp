@@ -1,16 +1,15 @@
 #include "Scene.hpp"
 
-#include <stdexcept>
-#include <filesystem>
+#include <fastgltf/core.hpp>
+#include <fastgltf/tools.hpp>
+#include <fastgltf/types.hpp>
 #include <glm/gtc/constants.hpp>
-#include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
-#include <fastgltf/core.hpp>
-#include <fastgltf/types.hpp>
-#include <fastgltf/tools.hpp>
-
+#include <filesystem>
+#include <stdexcept>
 
 std::pair<std::vector<Vertex>, std::vector<uint32_t>> makeCube(glm::vec3 color, float size)
 {
@@ -19,35 +18,35 @@ std::pair<std::vector<Vertex>, std::vector<uint32_t>> makeCube(glm::vec3 color, 
     // Bitangent = cross(normal, tangent) * w, reconstructed in the shader.
     std::vector<Vertex> verts = {
         // +Z face (front)  normal=(0,0,1)  U goes along +X → tangent=(1,0,0)
-        {{-h, -h, h}, color, {0, 0}, {0, 0, 1}, {1, 0, 0, 1}},
-        {{h, -h, h}, color, {1, 0}, {0, 0, 1}, {1, 0, 0, 1}},
-        {{h, h, h}, color, {1, 1}, {0, 0, 1}, {1, 0, 0, 1}},
-        {{-h, h, h}, color, {0, 1}, {0, 0, 1}, {1, 0, 0, 1}},
+        { {-h, -h, h}, color, {0, 0},  {0, 0, 1},  {1, 0, 0, 1}},
+        {  {h, -h, h}, color, {1, 0},  {0, 0, 1},  {1, 0, 0, 1}},
+        {   {h, h, h}, color, {1, 1},  {0, 0, 1},  {1, 0, 0, 1}},
+        {  {-h, h, h}, color, {0, 1},  {0, 0, 1},  {1, 0, 0, 1}},
         // -Z face (back)   normal=(0,0,-1) U goes along -X → tangent=(-1,0,0)
-        {{h, -h, -h}, color, {0, 0}, {0, 0, -1}, {-1, 0, 0, 1}},
+        { {h, -h, -h}, color, {0, 0}, {0, 0, -1}, {-1, 0, 0, 1}},
         {{-h, -h, -h}, color, {1, 0}, {0, 0, -1}, {-1, 0, 0, 1}},
-        {{-h, h, -h}, color, {1, 1}, {0, 0, -1}, {-1, 0, 0, 1}},
-        {{h, h, -h}, color, {0, 1}, {0, 0, -1}, {-1, 0, 0, 1}},
+        { {-h, h, -h}, color, {1, 1}, {0, 0, -1}, {-1, 0, 0, 1}},
+        {  {h, h, -h}, color, {0, 1}, {0, 0, -1}, {-1, 0, 0, 1}},
         // +X face (right)  normal=(1,0,0)  U goes along -Z → tangent=(0,0,-1)
-        {{h, -h, h}, color, {0, 0}, {1, 0, 0}, {0, 0, -1, 1}},
-        {{h, -h, -h}, color, {1, 0}, {1, 0, 0}, {0, 0, -1, 1}},
-        {{h, h, -h}, color, {1, 1}, {1, 0, 0}, {0, 0, -1, 1}},
-        {{h, h, h}, color, {0, 1}, {1, 0, 0}, {0, 0, -1, 1}},
+        {  {h, -h, h}, color, {0, 0},  {1, 0, 0}, {0, 0, -1, 1}},
+        { {h, -h, -h}, color, {1, 0},  {1, 0, 0}, {0, 0, -1, 1}},
+        {  {h, h, -h}, color, {1, 1},  {1, 0, 0}, {0, 0, -1, 1}},
+        {   {h, h, h}, color, {0, 1},  {1, 0, 0}, {0, 0, -1, 1}},
         // -X face (left)   normal=(-1,0,0) U goes along +Z → tangent=(0,0,1)
-        {{-h, -h, -h}, color, {0, 0}, {-1, 0, 0}, {0, 0, 1, 1}},
-        {{-h, -h, h}, color, {1, 0}, {-1, 0, 0}, {0, 0, 1, 1}},
-        {{-h, h, h}, color, {1, 1}, {-1, 0, 0}, {0, 0, 1, 1}},
-        {{-h, h, -h}, color, {0, 1}, {-1, 0, 0}, {0, 0, 1, 1}},
+        {{-h, -h, -h}, color, {0, 0}, {-1, 0, 0},  {0, 0, 1, 1}},
+        { {-h, -h, h}, color, {1, 0}, {-1, 0, 0},  {0, 0, 1, 1}},
+        {  {-h, h, h}, color, {1, 1}, {-1, 0, 0},  {0, 0, 1, 1}},
+        { {-h, h, -h}, color, {0, 1}, {-1, 0, 0},  {0, 0, 1, 1}},
         // +Y face (top)    normal=(0,1,0)  U goes along +X → tangent=(1,0,0)
-        {{-h, h, h}, color, {0, 0}, {0, 1, 0}, {1, 0, 0, 1}},
-        {{h, h, h}, color, {1, 0}, {0, 1, 0}, {1, 0, 0, 1}},
-        {{h, h, -h}, color, {1, 1}, {0, 1, 0}, {1, 0, 0, 1}},
-        {{-h, h, -h}, color, {0, 1}, {0, 1, 0}, {1, 0, 0, 1}},
+        {  {-h, h, h}, color, {0, 0},  {0, 1, 0},  {1, 0, 0, 1}},
+        {   {h, h, h}, color, {1, 0},  {0, 1, 0},  {1, 0, 0, 1}},
+        {  {h, h, -h}, color, {1, 1},  {0, 1, 0},  {1, 0, 0, 1}},
+        { {-h, h, -h}, color, {0, 1},  {0, 1, 0},  {1, 0, 0, 1}},
         // -Y face (bottom) normal=(0,-1,0) U goes along +X → tangent=(1,0,0)
-        {{-h, -h, -h}, color, {0, 0}, {0, -1, 0}, {1, 0, 0, 1}},
-        {{h, -h, -h}, color, {1, 0}, {0, -1, 0}, {1, 0, 0, 1}},
-        {{h, -h, h}, color, {1, 1}, {0, -1, 0}, {1, 0, 0, 1}},
-        {{-h, -h, h}, color, {0, 1}, {0, -1, 0}, {1, 0, 0, 1}},
+        {{-h, -h, -h}, color, {0, 0}, {0, -1, 0},  {1, 0, 0, 1}},
+        { {h, -h, -h}, color, {1, 0}, {0, -1, 0},  {1, 0, 0, 1}},
+        {  {h, -h, h}, color, {1, 1}, {0, -1, 0},  {1, 0, 0, 1}},
+        { {-h, -h, h}, color, {0, 1}, {0, -1, 0},  {1, 0, 0, 1}},
     };
     std::vector<uint32_t> idxs;
     for (uint32_t f = 0; f < 6; ++f)
@@ -69,8 +68,10 @@ std::pair<std::vector<Vertex>, std::vector<uint32_t>> makeCube(glm::vec3 color, 
 //
 // Poles: ring 0 (north, phi=0) and ring stacks (south, phi=π) are rings of coincident
 // vertices. The cap triangles that would degenerate there are skipped explicitly.
-std::pair<std::vector<Vertex>, std::vector<uint32_t>>
-makeSphere(glm::vec3 color, float radius, uint32_t sectors, uint32_t stacks)
+std::pair<std::vector<Vertex>, std::vector<uint32_t>> makeSphere(glm::vec3 color,
+                                                                 float radius,
+                                                                 uint32_t sectors,
+                                                                 uint32_t stacks)
 {
     std::vector<Vertex> verts;
     std::vector<uint32_t> idxs;
@@ -78,22 +79,23 @@ makeSphere(glm::vec3 color, float radius, uint32_t sectors, uint32_t stacks)
 
     for (uint32_t i = 0; i <= stacks; ++i)
     {
-        float phi = glm::pi<float>() * static_cast<float>(i) / static_cast<float>(stacks);
+        float phi    = glm::pi<float>() * static_cast<float>(i) / static_cast<float>(stacks);
         float sinPhi = std::sin(phi);
         float cosPhi = std::cos(phi);
 
         for (uint32_t j = 0; j <= sectors; ++j)
         {
-            float theta = glm::two_pi<float>() * static_cast<float>(j) / static_cast<float>(sectors);
+            float theta =
+                glm::two_pi<float>() * static_cast<float>(j) / static_cast<float>(sectors);
             float sinTheta = std::sin(theta);
             float cosTheta = std::cos(theta);
 
             glm::vec3 n = {sinPhi * cosTheta, sinPhi * sinTheta, cosPhi};
 
             Vertex v;
-            v.pos = n * radius;
-            v.normal = n;
-            v.color = color;
+            v.pos      = n * radius;
+            v.normal   = n;
+            v.color    = color;
             v.texCoord = {static_cast<float>(j) / static_cast<float>(sectors),
                           static_cast<float>(i) / static_cast<float>(stacks)};
             // Tangent: direction of increasing theta (east along the surface).
@@ -116,7 +118,7 @@ makeSphere(glm::vec3 color, float radius, uint32_t sectors, uint32_t stacks)
             uint32_t v10 = (i + 1) * (sectors + 1) + j;
             uint32_t v11 = v10 + 1;
 
-            if (i != 0) // top triangle (skip north-pole cap)
+            if (i != 0)          // top triangle (skip north-pole cap)
                 idxs.insert(idxs.end(), {v00, v10, v01});
             if (i != stacks - 1) // bottom triangle (skip south-pole cap)
                 idxs.insert(idxs.end(), {v01, v10, v11});
@@ -132,9 +134,9 @@ std::pair<std::vector<Vertex>, std::vector<uint32_t>> makePlane(glm::vec3 color,
     // Plane in XY, normal = +Z, U goes along +X → tangent = (1,0,0,1)
     std::vector<Vertex> verts = {
         {{-h, -h, 0.0f}, color, {0, 0}, {0, 0, 1}, {1, 0, 0, 1}},
-        {{h, -h, 0.0f}, color, {1, 0}, {0, 0, 1}, {1, 0, 0, 1}},
-        {{h, h, 0.0f}, color, {1, 1}, {0, 0, 1}, {1, 0, 0, 1}},
-        {{-h, h, 0.0f}, color, {0, 1}, {0, 0, 1}, {1, 0, 0, 1}},
+        { {h, -h, 0.0f}, color, {1, 0}, {0, 0, 1}, {1, 0, 0, 1}},
+        {  {h, h, 0.0f}, color, {1, 1}, {0, 0, 1}, {1, 0, 0, 1}},
+        { {-h, h, 0.0f}, color, {0, 1}, {0, 0, 1}, {1, 0, 0, 1}},
     };
     std::vector<uint32_t> idxs = {0, 1, 2, 0, 2, 3};
     return {verts, idxs};
@@ -146,39 +148,42 @@ std::pair<std::vector<Vertex>, std::vector<uint32_t>> makePlane(glm::vec3 color,
 // Geometry is in glTF space (Y-up, right-handed). The caller applies
 // any coordinate-system transform via the scene.json "yUpToZUp" flag.
 
-static glm::mat4 nodeTransform(const fastgltf::Node &node)
+static glm::mat4 nodeTransform(const fastgltf::Node& node)
 {
     // A node stores its local transform as either a pre-baked matrix or
     // separate TRS (Translation, Rotation as quaternion, Scale) components.
-    return std::visit(fastgltf::visitor{[](const fastgltf::math::fmat4x4 &m)
+    return std::visit(fastgltf::visitor{[](const fastgltf::math::fmat4x4& m)
                                         {
                                             // fastgltf stores matrices column-major, same as GLM.
                                             return glm::make_mat4(m.data());
                                         },
-                                        [](const fastgltf::TRS &trs)
+                                        [](const fastgltf::TRS& trs)
                                         {
                                             glm::vec3 t = glm::make_vec3(trs.translation.data());
                                             glm::quat r = glm::make_quat(trs.rotation.data());
                                             glm::vec3 s = glm::make_vec3(trs.scale.data());
-                                            return glm::translate(glm::mat4(1.0f), t) * glm::mat4_cast(r) * glm::scale(glm::mat4(1.0f), s);
+                                            return glm::translate(glm::mat4(1.0f), t) *
+                                                   glm::mat4_cast(r) *
+                                                   glm::scale(glm::mat4(1.0f), s);
                                         }},
                       node.transform);
 }
 
-static void visitNode(const fastgltf::Asset &asset,
+static void visitNode(const fastgltf::Asset& asset,
                       size_t nodeIndex,
-                      const glm::mat4 &parentTransform,
-                      const std::filesystem::path &baseDir,
-                      std::vector<GltfPrimitive> &out, bool yUpToZUp)
+                      const glm::mat4& parentTransform,
+                      const std::filesystem::path& baseDir,
+                      std::vector<GltfPrimitive>& out,
+                      bool yUpToZUp)
 {
-    const fastgltf::Node &node = asset.nodes[nodeIndex];
-    glm::mat4 worldTransform = parentTransform * nodeTransform(node);
+    const fastgltf::Node& node = asset.nodes[nodeIndex];
+    glm::mat4 worldTransform   = parentTransform * nodeTransform(node);
 
     if (node.meshIndex.has_value())
     {
-        const fastgltf::Mesh &mesh = asset.meshes[node.meshIndex.value()];
+        const fastgltf::Mesh& mesh = asset.meshes[node.meshIndex.value()];
 
-        for (const fastgltf::Primitive &prim : mesh.primitives)
+        for (const fastgltf::Primitive& prim : mesh.primitives)
         {
             GltfPrimitive result;
             result.transform = worldTransform;
@@ -189,14 +194,15 @@ static void visitNode(const fastgltf::Asset &asset,
             if (posIt == prim.attributes.end())
                 throw std::runtime_error("failed to parse glTF: primitive missing POSITION");
 
-            const fastgltf::Accessor &posAcc = asset.accessors[posIt->accessorIndex];
+            const fastgltf::Accessor& posAcc = asset.accessors[posIt->accessorIndex];
             result.vertices.resize(posAcc.count);
 
             fastgltf::iterateAccessorWithIndex<fastgltf::math::fvec3>(
-                asset, posAcc,
+                asset,
+                posAcc,
                 [&](fastgltf::math::fvec3 p, size_t i)
                 {
-                    result.vertices[i].pos = {p.x(), p.y(), p.z()};
+                    result.vertices[i].pos   = {p.x(), p.y(), p.z()};
                     result.vertices[i].color = {1.0f, 1.0f, 1.0f};
                 });
 
@@ -205,11 +211,10 @@ static void visitNode(const fastgltf::Asset &asset,
             if (normIt != prim.attributes.end())
             {
                 fastgltf::iterateAccessorWithIndex<fastgltf::math::fvec3>(
-                    asset, asset.accessors[normIt->accessorIndex],
+                    asset,
+                    asset.accessors[normIt->accessorIndex],
                     [&](fastgltf::math::fvec3 n, size_t i)
-                    {
-                        result.vertices[i].normal = {n.x(), n.y(), n.z()};
-                    });
+                    { result.vertices[i].normal = {n.x(), n.y(), n.z()}; });
             }
 
             // ── Texture coordinates ───────────────────────────────────────
@@ -217,11 +222,10 @@ static void visitNode(const fastgltf::Asset &asset,
             if (uvIt != prim.attributes.end())
             {
                 fastgltf::iterateAccessorWithIndex<fastgltf::math::fvec2>(
-                    asset, asset.accessors[uvIt->accessorIndex],
+                    asset,
+                    asset.accessors[uvIt->accessorIndex],
                     [&](fastgltf::math::fvec2 uv, size_t i)
-                    {
-                        result.vertices[i].texCoord = {uv.x(), uv.y()};
-                    });
+                    { result.vertices[i].texCoord = {uv.x(), uv.y()}; });
             }
 
             // ── Tangents ─────────────────────────────────────────────────
@@ -229,7 +233,8 @@ static void visitNode(const fastgltf::Asset &asset,
             if (tanIt != prim.attributes.end())
             {
                 fastgltf::iterateAccessorWithIndex<fastgltf::math::fvec4>(
-                    asset, asset.accessors[tanIt->accessorIndex],
+                    asset,
+                    asset.accessors[tanIt->accessorIndex],
                     [&](fastgltf::math::fvec4 t, size_t i)
                     {
                         // glTF tangent: xyz = direction, w = bitangent sign
@@ -240,7 +245,7 @@ static void visitNode(const fastgltf::Asset &asset,
             // ── Indices ──────────────────────────────────────────────────
             if (prim.indicesAccessor.has_value())
             {
-                const fastgltf::Accessor &idxAcc = asset.accessors[prim.indicesAccessor.value()];
+                const fastgltf::Accessor& idxAcc = asset.accessors[prim.indicesAccessor.value()];
                 result.indices.resize(idxAcc.count);
                 fastgltf::copyFromAccessor<uint32_t>(asset, idxAcc, result.indices.data());
             }
@@ -248,31 +253,36 @@ static void visitNode(const fastgltf::Asset &asset,
             // ── Material / texture paths ──────────────────────────────────
             if (prim.materialIndex.has_value())
             {
-                const fastgltf::Material &mat = asset.materials[prim.materialIndex.value()];
+                const fastgltf::Material& mat = asset.materials[prim.materialIndex.value()];
 
                 auto resolveImage = [&](size_t texIndex) -> GltfImage
                 {
-                    const fastgltf::Texture &tex = asset.textures[texIndex];
+                    const fastgltf::Texture& tex = asset.textures[texIndex];
                     if (!tex.imageIndex.has_value())
                         return {};
-                    const fastgltf::Image &img = asset.images[tex.imageIndex.value()];
+                    const fastgltf::Image& img = asset.images[tex.imageIndex.value()];
 
-                    if (const auto *uri = std::get_if<fastgltf::sources::URI>(&img.data))
+                    if (const auto* uri = std::get_if<fastgltf::sources::URI>(&img.data))
                         return {(baseDir / uri->uri.path()).string(), {}};
 
-                    if (const auto *arr = std::get_if<fastgltf::sources::Array>(&img.data))
-                        return {{}, std::vector<uint8_t>(
-                            reinterpret_cast<const uint8_t*>(arr->bytes.data()),
-                            reinterpret_cast<const uint8_t*>(arr->bytes.data()) + arr->bytes.size())};
+                    if (const auto* arr = std::get_if<fastgltf::sources::Array>(&img.data))
+                        return {{},
+                                std::vector<uint8_t>(
+                                    reinterpret_cast<const uint8_t*>(arr->bytes.data()),
+                                    reinterpret_cast<const uint8_t*>(arr->bytes.data()) +
+                                        arr->bytes.size())};
 
                     // GLB embeds images in the binary buffer chunk, referenced by a BufferView.
-                    if (const auto *bv = std::get_if<fastgltf::sources::BufferView>(&img.data))
+                    if (const auto* bv = std::get_if<fastgltf::sources::BufferView>(&img.data))
                     {
-                        const fastgltf::BufferView &bufView = asset.bufferViews[bv->bufferViewIndex];
-                        const fastgltf::Buffer     &buf     = asset.buffers[bufView.bufferIndex];
-                        if (const auto *data = std::get_if<fastgltf::sources::Array>(&buf.data))
+                        const fastgltf::BufferView& bufView =
+                            asset.bufferViews[bv->bufferViewIndex];
+                        const fastgltf::Buffer& buf = asset.buffers[bufView.bufferIndex];
+                        if (const auto* data = std::get_if<fastgltf::sources::Array>(&buf.data))
                         {
-                            const uint8_t *start = reinterpret_cast<const uint8_t*>(data->bytes.data()) + bufView.byteOffset;
+                            const uint8_t* start =
+                                reinterpret_cast<const uint8_t*>(data->bytes.data()) +
+                                bufView.byteOffset;
                             return {{}, std::vector<uint8_t>(start, start + bufView.byteLength)};
                         }
                     }
@@ -287,7 +297,8 @@ static void visitNode(const fastgltf::Asset &asset,
                     result.normalMap = resolveImage(mat.normalTexture->textureIndex);
 
                 if (mat.pbrData.metallicRoughnessTexture.has_value())
-                    result.metallicRoughness = resolveImage(mat.pbrData.metallicRoughnessTexture->textureIndex);
+                    result.metallicRoughness =
+                        resolveImage(mat.pbrData.metallicRoughnessTexture->textureIndex);
             }
 
             out.push_back(std::move(result));
@@ -299,7 +310,7 @@ static void visitNode(const fastgltf::Asset &asset,
         visitNode(asset, childIndex, worldTransform, baseDir, out, yUpToZUp);
 }
 
-std::vector<GltfPrimitive> loadGLTF(const std::filesystem::path &path, bool yUpToZUp)
+std::vector<GltfPrimitive> loadGLTF(const std::filesystem::path& path, bool yUpToZUp)
 {
     auto dataResult = fastgltf::GltfDataBuffer::FromPath(path);
     if (dataResult.error() != fastgltf::Error::None)
@@ -308,27 +319,25 @@ std::vector<GltfPrimitive> loadGLTF(const std::filesystem::path &path, bool yUpT
     fastgltf::Parser parser;
     auto assetResult = parser.loadGltf(dataResult.get(),
                                        path.parent_path(),
-                                       fastgltf::Options::LoadExternalImages | fastgltf::Options::LoadExternalBuffers);
+                                       fastgltf::Options::LoadExternalImages |
+                                           fastgltf::Options::LoadExternalBuffers);
     if (assetResult.error() != fastgltf::Error::None)
-        throw std::runtime_error("failed to parse glTF '" + path.string() + "': " + std::string(fastgltf::getErrorMessage(assetResult.error())));
+        throw std::runtime_error("failed to parse glTF '" + path.string() + "': " +
+                                 std::string(fastgltf::getErrorMessage(assetResult.error())));
 
-    const fastgltf::Asset &asset = assetResult.get();
+    const fastgltf::Asset& asset = assetResult.get();
 
     std::vector<GltfPrimitive> primitives;
 
     // A glTF file can have multiple scenes; use the default one (or scene 0).
-    size_t sceneIndex = asset.defaultScene.value_or(0);
-    const fastgltf::Scene &scene = asset.scenes[sceneIndex];
+    size_t sceneIndex            = asset.defaultScene.value_or(0);
+    const fastgltf::Scene& scene = asset.scenes[sceneIndex];
 
     glm::mat4 rootTransform = glm::mat4(1.0f);
     if (yUpToZUp)
     {
         // Columns encode: new_x=old_x, new_y=-old_z, new_z=old_y
-        rootTransform = glm::mat4(
-            1, 0, 0, 0,
-            0, 0, 1, 0,
-            0, -1, 0, 0,
-            0, 0, 0, 1);
+        rootTransform = glm::mat4(1, 0, 0, 0, 0, 0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 1);
     }
 
     // Walk every root node; visitNode recurses into children.

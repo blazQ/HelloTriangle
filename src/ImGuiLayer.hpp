@@ -18,7 +18,7 @@ class Swapchain;
 //   imguiLayer.renderDrawData(cmd, swapchainImageView, extent);
 class ImGuiLayer
 {
-public:
+  public:
     // Initialises Dear ImGui with the Vulkan and GLFW backends.
     // Must be called after the device and swapchain are ready.
     void init(Device& device, Swapchain& swapchain, GLFWwindow* window);
@@ -38,9 +38,9 @@ public:
     // Records the ImGui draw data into cmd using dynamic rendering.
     // Handles beginRendering / endRendering internally.
     void renderDrawData(vk::raii::CommandBuffer& cmd,
-                        vk::ImageView            swapchainImageView,
-                        vk::Extent2D             extent);
+                        vk::ImageView swapchainImageView,
+                        vk::Extent2D extent);
 
-private:
+  private:
     vk::raii::DescriptorPool pool_ = nullptr;
 };

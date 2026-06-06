@@ -1,14 +1,14 @@
 #pragma once
 
-#include <cstdint>
-#include <string>
-#include <vector>
-
-#include <vulkan/vulkan.hpp>
-
 #include "Camera.hpp"
 #include "Renderable.hpp"
 #include "RenderSettings.hpp"
+
+#include <vulkan/vulkan.hpp>
+
+#include <cstdint>
+#include <string>
+#include <vector>
 
 // Owns the ImGui widget tree for the scene editor panel.
 // Receives a RenderSettings reference each frame and modifies it directly —
@@ -19,20 +19,20 @@
 // Vulkan pipelines or GPU resources.
 class SceneEditor
 {
-public:
+  public:
     // Read-only information gathered by VulkanRenderer before calling draw().
     struct DisplayInfo
     {
-        vk::Extent2D         resolution;
-        const char*          deviceName;   // lifetime: valid for duration of the Device
-        uint32_t             textureCount;
+        vk::Extent2D resolution;
+        const char* deviceName; // lifetime: valid for duration of the Device
+        uint32_t textureCount;
         vk::SampleCountFlags supportedMsaa;
     };
 
     // Build the full ImGui window for one frame.
     // Must be called between ImGuiLayer::beginFrame() and ImGuiLayer::endFrame().
-    void draw(RenderSettings&          settings,
+    void draw(RenderSettings& settings,
               std::vector<Renderable>& renderables,
-              Camera&                  camera,
-              const DisplayInfo&       info);
+              Camera& camera,
+              const DisplayInfo& info);
 };

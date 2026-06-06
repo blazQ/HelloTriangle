@@ -22,8 +22,6 @@ import vulkan_hpp;
 #endif
 
 #define GLFW_INCLUDE_VULKAN
-#include <GLFW/glfw3.h>
-
 #include "Camera.hpp"
 #include "Device.hpp"
 #include "ImGuiLayer.hpp"
@@ -34,12 +32,14 @@ import vulkan_hpp;
 #include "Swapchain.hpp"
 #include "TextureManager.hpp"
 
+#include <GLFW/glfw3.h>
+
 class VulkanRenderer
 {
-public:
+  public:
     void run();
 
-private:
+  private:
     // -------------------------------------------------------------------------
     // Constants
     // -------------------------------------------------------------------------
@@ -54,10 +54,10 @@ private:
     struct PushConstants
     {
         glm::mat4 model;
-        uint32_t  textureIndex;
-        uint32_t  metallicRoughnessIndex; // 0xFFFF = use default roughness/metallic from UBO
-        uint32_t  normalMapIndex;         // 0xFFFF = use geometric normal
-        uint32_t  heightMapIndex;         // 0xFFFF = no POM
+        uint32_t textureIndex;
+        uint32_t metallicRoughnessIndex; // 0xFFFF = use default roughness/metallic from UBO
+        uint32_t normalMapIndex;         // 0xFFFF = use geometric normal
+        uint32_t heightMapIndex;         // 0xFFFF = no POM
     };
 
     // Data layout of the uniform buffer as the shader sees it.
@@ -70,16 +70,16 @@ private:
         glm::mat4 lightSpaceMatrix;
         glm::vec4 lightDir;
         glm::vec4 cameraPos;
-        glm::vec4 materialParams;        // x=ambient, y=defaultRoughness, z=defaultMetallic, w=exposure
-        glm::vec4 pointLightPos[4];      // xyz=world position, w=intensity
-        glm::vec4 pointLightColor[4];    // xyz=color, w=radius (falloff distance)
-        glm::vec4 lightCounts;           // x=number of active point lights
-        glm::vec4 shadowParams;          // x=biasMin, y=biasMax
-        glm::vec4 pomParams;             // x=depthScale, y=minSteps, z=maxSteps
-        glm::vec4 fogParams;             // x=density, y=heightFalloff, z=maxOpacity
+        glm::vec4 materialParams;   // x=ambient, y=defaultRoughness, z=defaultMetallic, w=exposure
+        glm::vec4 pointLightPos[4]; // xyz=world position, w=intensity
+        glm::vec4 pointLightColor[4]; // xyz=color, w=radius (falloff distance)
+        glm::vec4 lightCounts;        // x=number of active point lights
+        glm::vec4 shadowParams;       // x=biasMin, y=biasMax
+        glm::vec4 pomParams;          // x=depthScale, y=minSteps, z=maxSteps
+        glm::vec4 fogParams;          // x=density, y=heightFalloff, z=maxOpacity
         glm::vec4 fogColor;
-        glm::mat4 invProj;               // inverse of proj (sky ray reconstruction)
-        glm::mat4 invViewRot;            // inverse of view rotation (sky ray reconstruction)
+        glm::mat4 invProj;            // inverse of proj (sky ray reconstruction)
+        glm::mat4 invViewRot;         // inverse of view rotation (sky ray reconstruction)
     };
 
     // -------------------------------------------------------------------------
@@ -91,52 +91,52 @@ private:
     std::filesystem::path basePath_;
 
     // Window
-    GLFWwindow* window           = nullptr;
-    bool        framebufferResized = false;
+    GLFWwindow* window      = nullptr;
+    bool framebufferResized = false;
 
     // Core Vulkan objects
-    std::unique_ptr<Device>    vulkanDevice;
+    std::unique_ptr<Device> vulkanDevice;
     std::unique_ptr<Swapchain> swapchain;
 
     // Scene pipeline
     vk::raii::DescriptorSetLayout descriptorSetLayout = nullptr;
-    vk::raii::PipelineLayout      pipelineLayout      = nullptr;
-    vk::raii::Pipeline            graphicsPipeline    = nullptr;
-    vk::raii::Pipeline            shadowPipeline      = nullptr;
+    vk::raii::PipelineLayout pipelineLayout           = nullptr;
+    vk::raii::Pipeline graphicsPipeline               = nullptr;
+    vk::raii::Pipeline shadowPipeline                 = nullptr;
 
     // Sky pipeline
-    vk::raii::DescriptorSetLayout        skyDescriptorSetLayout = nullptr;
-    vk::raii::PipelineLayout             skyPipelineLayout      = nullptr;
-    vk::raii::Pipeline                   skyPipeline            = nullptr;
-    vk::raii::DescriptorPool             skyDescriptorPool      = nullptr;
+    vk::raii::DescriptorSetLayout skyDescriptorSetLayout = nullptr;
+    vk::raii::PipelineLayout skyPipelineLayout           = nullptr;
+    vk::raii::Pipeline skyPipeline                       = nullptr;
+    vk::raii::DescriptorPool skyDescriptorPool           = nullptr;
     std::vector<vk::raii::DescriptorSet> skyDescriptorSets;
 
     // Command recording
-    vk::raii::CommandPool                 commandPool = nullptr;
-    std::vector<vk::raii::CommandBuffer>  commandBuffers;
+    vk::raii::CommandPool commandPool = nullptr;
+    std::vector<vk::raii::CommandBuffer> commandBuffers;
     uint32_t frameIndex = 0;
 
     // Render attachments (MSAA + depth)
-    vk::SampleCountFlagBits msaaSamples = vk::SampleCountFlagBits::e1; // currently applied
-    vk::raii::Image        colorImage       = nullptr;
-    vk::raii::DeviceMemory colorImageMemory = nullptr;
-    vk::raii::ImageView    colorImageView   = nullptr;
-    vk::raii::Image        depthImage       = nullptr;
-    vk::raii::DeviceMemory depthImageMemory = nullptr;
-    vk::raii::ImageView    depthImageView   = nullptr;
-    vk::raii::Image        normalImage          = nullptr;
-    vk::raii::DeviceMemory normalImageMemory    = nullptr;
-    vk::raii::ImageView    normalImageView      = nullptr;
-    vk::raii::Image        normalResolveImage       = nullptr;
+    vk::SampleCountFlagBits msaaSamples      = vk::SampleCountFlagBits::e1; // currently applied
+    vk::raii::Image colorImage               = nullptr;
+    vk::raii::DeviceMemory colorImageMemory  = nullptr;
+    vk::raii::ImageView colorImageView       = nullptr;
+    vk::raii::Image depthImage               = nullptr;
+    vk::raii::DeviceMemory depthImageMemory  = nullptr;
+    vk::raii::ImageView depthImageView       = nullptr;
+    vk::raii::Image normalImage              = nullptr;
+    vk::raii::DeviceMemory normalImageMemory = nullptr;
+    vk::raii::ImageView normalImageView      = nullptr;
+    vk::raii::Image normalResolveImage       = nullptr;
     vk::raii::DeviceMemory normalResolveImageMemory = nullptr;
-    vk::raii::ImageView    normalResolveImageView   = nullptr;
+    vk::raii::ImageView normalResolveImageView      = nullptr;
 
     // Shadow map
-    static constexpr uint32_t SHADOW_MAP_SIZE = 2048;
-    vk::raii::Image        shadowMapImage       = nullptr;
+    static constexpr uint32_t SHADOW_MAP_SIZE   = 2048;
+    vk::raii::Image shadowMapImage              = nullptr;
     vk::raii::DeviceMemory shadowMapImageMemory = nullptr;
-    vk::raii::ImageView    shadowMapImageView   = nullptr;
-    vk::raii::Sampler      shadowMapSampler     = nullptr;
+    vk::raii::ImageView shadowMapImageView      = nullptr;
+    vk::raii::Sampler shadowMapSampler          = nullptr;
 
     // All loaded textures — owned by TextureManager.
     TextureManager textureManager_;
@@ -145,13 +145,13 @@ private:
     std::vector<Renderable> renderables;
 
     // Uniform buffers (one per frame in flight)
-    std::vector<vk::raii::Buffer>        uniformBuffers;
-    std::vector<vk::raii::DeviceMemory>  uniformBuffersMemory;
-    std::vector<void*>                   uniformBuffersMapped;
+    std::vector<vk::raii::Buffer> uniformBuffers;
+    std::vector<vk::raii::DeviceMemory> uniformBuffersMemory;
+    std::vector<void*> uniformBuffersMapped;
 
     // Camera
-    Camera    camera;
-    bool      cameraMode   = false;
+    Camera camera;
+    bool cameraMode        = false;
     glm::vec2 lastMousePos = {0.0f, 0.0f};
 
     // All user-tweakable render parameters
@@ -161,16 +161,16 @@ private:
     float prevTime = 0.0f;
 
     // Descriptors
-    vk::raii::DescriptorPool             descriptorPool = nullptr;
+    vk::raii::DescriptorPool descriptorPool = nullptr;
     std::vector<vk::raii::DescriptorSet> descriptorSets;
 
     // Synchronization
     std::vector<vk::raii::Semaphore> presentCompleteSemaphores;
     std::vector<vk::raii::Semaphore> renderFinishedSemaphores;
-    std::vector<vk::raii::Fence>     inFlightFences;
+    std::vector<vk::raii::Fence> inFlightFences;
 
     // Dear ImGui — Vulkan integration and frame lifecycle
-    ImGuiLayer  imguiLayer_;
+    ImGuiLayer imguiLayer_;
     SceneEditor sceneEditor_;
 
     // -------------------------------------------------------------------------
@@ -208,7 +208,8 @@ private:
     void createShadowMapSampler();
 
     // Scene
-    void uploadRenderable(Renderable& r, const std::vector<Vertex>& verts,
+    void uploadRenderable(Renderable& r,
+                          const std::vector<Vertex>& verts,
                           const std::vector<uint32_t>& idxs);
     void loadScene();
     void createUniformBuffers();
@@ -226,8 +227,10 @@ private:
     void updateUniformBuffer(uint32_t currentImage);
     void recordCommandBuffer(uint32_t imageIndex);
     void recordImageBarrier(vk::Image image,
-                            vk::ImageLayout oldLayout, vk::ImageLayout newLayout,
-                            vk::AccessFlags2 srcAccessMask, vk::AccessFlags2 dstAccessMask,
+                            vk::ImageLayout oldLayout,
+                            vk::ImageLayout newLayout,
+                            vk::AccessFlags2 srcAccessMask,
+                            vk::AccessFlags2 dstAccessMask,
                             vk::PipelineStageFlags2 srcStageMask,
                             vk::PipelineStageFlags2 dstStageMask,
                             vk::ImageAspectFlags imageAspectFlags);

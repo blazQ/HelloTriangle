@@ -1,18 +1,17 @@
 #include "SceneEditor.hpp"
 
+#include "imgui.h"
+
 #include <cmath>
 #include <string>
 
-#include "imgui.h"
-
-void SceneEditor::draw(RenderSettings&          settings,
+void SceneEditor::draw(RenderSettings& settings,
                        std::vector<Renderable>& renderables,
-                       Camera&                  camera,
-                       const DisplayInfo&       info)
+                       Camera& camera,
+                       const DisplayInfo& info)
 {
-    ImGui::GetIO().DisplaySize = ImVec2(
-        static_cast<float>(info.resolution.width),
-        static_cast<float>(info.resolution.height));
+    ImGui::GetIO().DisplaySize = ImVec2(static_cast<float>(info.resolution.width),
+                                        static_cast<float>(info.resolution.height));
 
     ImGui::Begin("Info");
 
@@ -27,23 +26,27 @@ void SceneEditor::draw(RenderSettings&          settings,
 
     bool vsync = (settings.pendingPresentMode == vk::PresentModeKHR::eFifo);
     if (ImGui::Checkbox("V-Sync", &vsync))
-        settings.pendingPresentMode = vsync ? vk::PresentModeKHR::eFifo
-                                            : vk::PresentModeKHR::eMailbox;
+        settings.pendingPresentMode =
+            vsync ? vk::PresentModeKHR::eFifo : vk::PresentModeKHR::eMailbox;
 
-    static const vk::SampleCountFlagBits kSampleCounts[] = {
-        vk::SampleCountFlagBits::e1,  vk::SampleCountFlagBits::e2,
-        vk::SampleCountFlagBits::e4,  vk::SampleCountFlagBits::e8,
-        vk::SampleCountFlagBits::e16, vk::SampleCountFlagBits::e32,
-        vk::SampleCountFlagBits::e64};
+    static const vk::SampleCountFlagBits kSampleCounts[] = {vk::SampleCountFlagBits::e1,
+                                                            vk::SampleCountFlagBits::e2,
+                                                            vk::SampleCountFlagBits::e4,
+                                                            vk::SampleCountFlagBits::e8,
+                                                            vk::SampleCountFlagBits::e16,
+                                                            vk::SampleCountFlagBits::e32,
+                                                            vk::SampleCountFlagBits::e64};
     if (ImGui::BeginCombo("MSAA", vk::to_string(settings.pendingMsaaSamples).c_str()))
     {
         for (auto count : kSampleCounts)
         {
-            if (!(info.supportedMsaa & count)) continue;
+            if (!(info.supportedMsaa & count))
+                continue;
             bool selected = (count == settings.pendingMsaaSamples);
             if (ImGui::Selectable(vk::to_string(count).c_str(), selected))
                 settings.pendingMsaaSamples = count;
-            if (selected) ImGui::SetItemDefaultFocus();
+            if (selected)
+                ImGui::SetItemDefaultFocus();
         }
         ImGui::EndCombo();
     }
@@ -53,17 +56,17 @@ void SceneEditor::draw(RenderSettings&          settings,
     ImGui::Checkbox("Orbit light", &settings.lightOrbit);
     if (!settings.lightOrbit)
         ImGui::SliderAngle("Light angle", &settings.lightAngle, 0.0f, 360.0f);
-    ImGui::SliderFloat("Shadow bias min",  &settings.shadowBiasMin, 0.0f, 0.01f,  "%.4f");
-    ImGui::SliderFloat("Shadow bias max",  &settings.shadowBiasMax, 0.0f, 0.02f,  "%.4f");
-    ImGui::SliderFloat("Shadow distance",  &settings.shadowFar,     5.0f, 200.0f, "%.1f");
+    ImGui::SliderFloat("Shadow bias min", &settings.shadowBiasMin, 0.0f, 0.01f, "%.4f");
+    ImGui::SliderFloat("Shadow bias max", &settings.shadowBiasMax, 0.0f, 0.02f, "%.4f");
+    ImGui::SliderFloat("Shadow distance", &settings.shadowFar, 5.0f, 200.0f, "%.1f");
 
     ImGui::Separator();
 
     if (ImGui::CollapsingHeader("Parallax (POM)"))
     {
         ImGui::SliderFloat("Depth scale", &settings.pomDepthScale, 0.001f, 0.2f, "%.3f");
-        ImGui::SliderFloat("Min steps",   &settings.pomMinSteps,   4.0f,  16.0f, "%.0f");
-        ImGui::SliderFloat("Max steps",   &settings.pomMaxSteps,   8.0f,  64.0f, "%.0f");
+        ImGui::SliderFloat("Min steps", &settings.pomMinSteps, 4.0f, 16.0f, "%.0f");
+        ImGui::SliderFloat("Max steps", &settings.pomMaxSteps, 8.0f, 64.0f, "%.0f");
         ImGui::TextDisabled("Assign 'heightMap' in scene.json to activate POM per object.");
     }
 
@@ -76,10 +79,10 @@ void SceneEditor::draw(RenderSettings&          settings,
 
     ImGui::Checkbox("Tonemapping (ACES)", &settings.tonemapping);
     if (settings.tonemapping)
-        ImGui::SliderFloat("Exposure",         &settings.exposure,         0.1f, 10.0f);
-    ImGui::SliderFloat("Ambient",              &settings.ambient,          0.0f,  1.0f);
-    ImGui::SliderFloat("Default Roughness",    &settings.defaultRoughness, 0.0f,  1.0f);
-    ImGui::SliderFloat("Default Metallic",     &settings.defaultMetallic,  0.0f,  1.0f);
+        ImGui::SliderFloat("Exposure", &settings.exposure, 0.1f, 10.0f);
+    ImGui::SliderFloat("Ambient", &settings.ambient, 0.0f, 1.0f);
+    ImGui::SliderFloat("Default Roughness", &settings.defaultRoughness, 0.0f, 1.0f);
+    ImGui::SliderFloat("Default Metallic", &settings.defaultMetallic, 0.0f, 1.0f);
 
     ImGui::Separator();
 
@@ -88,9 +91,9 @@ void SceneEditor::draw(RenderSettings&          settings,
         ImGui::Checkbox("Enabled##sky", &settings.skyEnabled);
         if (settings.skyEnabled)
         {
-            ImGui::ColorEdit3("Horizon",   &settings.skyPush.horizonColor.x);
-            ImGui::ColorEdit3("Zenith",    &settings.skyPush.zenithColor.x);
-            ImGui::ColorEdit3("Ground",    &settings.skyPush.groundColor.x);
+            ImGui::ColorEdit3("Horizon", &settings.skyPush.horizonColor.x);
+            ImGui::ColorEdit3("Zenith", &settings.skyPush.zenithColor.x);
+            ImGui::ColorEdit3("Ground", &settings.skyPush.groundColor.x);
             ImGui::ColorEdit3("Sun color", &settings.skyPush.sunParams.x);
             float sunDeg = glm::degrees(std::acos(settings.skyPush.sunParams.w));
             if (ImGui::SliderFloat("Sun size (deg)", &sunDeg, 0.1f, 10.0f))
@@ -105,9 +108,9 @@ void SceneEditor::draw(RenderSettings&          settings,
         ImGui::Checkbox("Enabled##fog", &settings.fogEnabled);
         if (settings.fogEnabled)
         {
-            ImGui::SliderFloat("Density",       &settings.fogDensity,       0.0f, 0.1f,  "%.4f");
+            ImGui::SliderFloat("Density", &settings.fogDensity, 0.0f, 0.1f, "%.4f");
             ImGui::SliderFloat("Height falloff", &settings.fogHeightFalloff, 0.0f, 2.0f, "%.2f");
-            ImGui::SliderFloat("Max opacity",    &settings.fogMaxOpacity,    0.0f, 1.0f,  "%.2f");
+            ImGui::SliderFloat("Max opacity", &settings.fogMaxOpacity, 0.0f, 1.0f, "%.2f");
             ImGui::Checkbox("Sync color to sky horizon", &settings.fogSyncSky);
             if (!settings.fogSyncSky)
                 ImGui::ColorEdit3("Fog color", &settings.fogColor.x);
@@ -125,12 +128,18 @@ void SceneEditor::draw(RenderSettings&          settings,
 
     if (ImGui::CollapsingHeader("Point Lights"))
     {
-        bool atMax = static_cast<int>(settings.pointLights.size()) >= RenderSettings::MAX_POINT_LIGHTS;
-        if (atMax) ImGui::BeginDisabled();
+        bool atMax =
+            static_cast<int>(settings.pointLights.size()) >= RenderSettings::MAX_POINT_LIGHTS;
+        if (atMax)
+            ImGui::BeginDisabled();
         if (ImGui::Button("Add Light"))
             settings.pointLights.push_back(PointLightData{});
-        if (atMax) { ImGui::EndDisabled(); ImGui::SameLine();
-                     ImGui::TextDisabled("(max %d)", RenderSettings::MAX_POINT_LIGHTS); }
+        if (atMax)
+        {
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            ImGui::TextDisabled("(max %d)", RenderSettings::MAX_POINT_LIGHTS);
+        }
 
         int removeIdx = -1;
         for (int i = 0; i < static_cast<int>(settings.pointLights.size()); ++i)
@@ -140,12 +149,13 @@ void SceneEditor::draw(RenderSettings&          settings,
             std::string label = "Light " + std::to_string(i);
             if (ImGui::TreeNode(label.c_str()))
             {
-                ImGui::Checkbox("Enabled",     &pl.enabled);
-                ImGui::DragFloat3("Position",  &pl.position.x, 0.05f);
-                ImGui::ColorEdit3("Color",     &pl.color.x);
+                ImGui::Checkbox("Enabled", &pl.enabled);
+                ImGui::DragFloat3("Position", &pl.position.x, 0.05f);
+                ImGui::ColorEdit3("Color", &pl.color.x);
                 ImGui::SliderFloat("Intensity", &pl.intensity, 0.0f, 20.0f);
-                ImGui::SliderFloat("Radius",    &pl.radius,    0.5f, 50.0f);
-                if (ImGui::Button("Remove")) removeIdx = i;
+                ImGui::SliderFloat("Radius", &pl.radius, 0.5f, 50.0f);
+                if (ImGui::Button("Remove"))
+                    removeIdx = i;
                 ImGui::TreePop();
             }
             ImGui::PopID();
@@ -165,9 +175,9 @@ void SceneEditor::draw(RenderSettings&          settings,
             if (ImGui::TreeNode(r.label.c_str()))
             {
                 bool changed = false;
-                changed |= ImGui::DragFloat3("Position", &r.position.x,    0.05f);
+                changed |= ImGui::DragFloat3("Position", &r.position.x, 0.05f);
                 changed |= ImGui::DragFloat3("Rotation", &r.rotationDeg.x, 1.0f, -180.0f, 180.0f);
-                changed |= ImGui::DragFloat("Scale",     &r.scale,          0.01f, 0.01f, 100.0f);
+                changed |= ImGui::DragFloat("Scale", &r.scale, 0.01f, 0.01f, 100.0f);
                 if (changed)
                     r.modelMatrix = buildModelMatrix(r.position, r.rotationDeg, r.scale);
                 ImGui::TreePop();
