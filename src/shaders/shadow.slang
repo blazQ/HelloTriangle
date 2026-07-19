@@ -2,10 +2,9 @@
 // even though the shadow pass only uses the model matrix.
 struct ShadowPush {
     float4x4 model;
-    uint32_t textureIndex;
-    uint32_t specularMapIndex;
-    uint32_t normalMapIndex;
-    uint32_t heightMapIndex;   // must match full PushConstants layout; unused in shadow pass
+    // Explanation on the main scene shader.
+    uint32_t texIndices01; // high 16 = textureIndex, low 16 = metallicRoughnessIndex 
+    uint32_t texIndices23; // high 16 = normalMapIndex, low 16 = heightMapIndex
 };
 [[vk::push_constant]] ShadowPush push;
 
