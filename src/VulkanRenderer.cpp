@@ -1171,10 +1171,9 @@ void VulkanRenderer::recordCommandBuffer(uint32_t imageIndex)
     for (const auto& r : renderables)
     {
         PushConstants pc{r.modelMatrix,
-                         r.textureIndex,
-                         r.metallicRoughnessIndex,
-                         r.normalMapIndex,
-                         r.heightMapIndex};
+                         (r.textureIndex << 16) | (r.metallicRoughnessIndex & 0xFFFF),
+                         (r.normalMapIndex << 16) | (r.heightMapIndex & 0xFFFF)
+                        };
         cmd.pushConstants2(vk::PushConstantsInfo{}
                                .setLayout(*pipelineLayout)
                                .setStageFlags(vk::ShaderStageFlagBits::eVertex |
@@ -1322,11 +1321,11 @@ void VulkanRenderer::recordCommandBuffer(uint32_t imageIndex)
 
     for (const auto& r : renderables)
     {
+        // Packing textures information.
         PushConstants pc{r.modelMatrix,
-                         r.textureIndex,
-                         r.metallicRoughnessIndex,
-                         r.normalMapIndex,
-                         r.heightMapIndex};
+                         (r.textureIndex << 16) | (r.metallicRoughnessIndex & 0xFFFF),
+                         (r.normalMapIndex << 16) | (r.heightMapIndex & 0xFFFF)
+                        };
         cmd.pushConstants2(vk::PushConstantsInfo{}
                                .setLayout(*pipelineLayout)
                                .setStageFlags(vk::ShaderStageFlagBits::eVertex |

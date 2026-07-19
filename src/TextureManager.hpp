@@ -15,7 +15,7 @@ class Device;
 class TextureManager
 {
   public:
-    static constexpr uint32_t MAX_TEXTURES = 2048;
+    static constexpr uint32_t MAX_TEXTURES = 65534;
 
     TextureManager() = default;
     void init(Device& device);

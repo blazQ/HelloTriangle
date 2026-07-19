@@ -54,10 +54,10 @@ class VulkanRenderer
     struct PushConstants
     {
         glm::mat4 model;
-        uint32_t textureIndex;
-        uint32_t metallicRoughnessIndex; // 0xFFFF = use default roughness/metallic from UBO
-        uint32_t normalMapIndex;         // 0xFFFF = use geometric normal
-        uint32_t heightMapIndex;         // 0xFFFF = no POM
+        // Conventions:
+        // 0xFFFF => Default Value for Roughness, Geometric Normal for Normal Mapping, no POM for HeightMap.
+        uint32_t textureIndex01; // Packs textureIndex + metallicRoughness
+        uint32_t textureIndex23; // Packs normalMapIndex + heightMapIndex
     };
 
     // Data layout of the uniform buffer as the shader sees it.

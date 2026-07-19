@@ -39,11 +39,14 @@ ConstantBuffer<UniformBuffer> ubo;
 
 struct PushConstants {
     float4x4 model;
-    uint32_t textureIndex;
-    uint32_t metallicRoughnessIndex; // 0xFFFF = use default roughness/metallic from UBO
-    uint32_t normalMapIndex;         // 0xFFFF = use geometric normal
-    uint32_t heightMapIndex;         // 0xFFFF = no POM
+
+    // Packed texture indexes to avoid wasting push constants budget.
+    // These values are the same for the entire draw call, so they live in scalar registers.
+    // This "optimization" can be done because MAX_TEXTURES is 2048 = 2^11 => Only 11 bits are actually used per field.
+    uint32_t texIndices01; // high 16 = textureIndex, low 16 = metallicRoughnessIndex 
+    uint32_t texIndices23; // high 16 = normalMapIndex, low 16 = heightMapIndex
 };
+
 [[vk::push_constant]] PushConstants push;
 
 // Parallax Occlusion Mapping.
@@ -144,6 +147,7 @@ VSOutput vertMain(VSInput input) {
     return output;
 }
 
+
 [[vk::binding(1, 0)]] Sampler2D textures[];
 [[vk::binding(2, 0)]] Sampler2DShadow shadowMap;
 
@@ -236,11 +240,18 @@ struct FSOutput
 
 [shader("fragment")]
 FSOutput fragMain(VSOutput vertIn) {
+    // Unpacking:
+    
+    uint textureIndex = (push.texIndices01 >> 16) & 0xFFFF;
+    uint metallicRoughnessIndex = push.texIndices01 & 0xFFFF;
+    uint heightMapIndex = (push.texIndices23 >> 16) & 0xFFFF;
+    uint normalMapIndex = push.texIndices23 & 0xFFFF;
+
     // --- Parallax Occlusion Mapping ---
     // Displace the UV before any texture sampling so all maps (albedo, normal, metallic)
     // show the same displaced surface. Only applied when a height map is bound.
     float2 uv = vertIn.fragTexCoord;
-    if (push.heightMapIndex != 0xFFFFu)
+    if (heightMapIndex != 0xFFFFu)
     {
         // Build the TBN matrix (rows = T, B, N in world space).
         // Multiplying a world-space vector by this matrix gives tangent-space coordinates.
@@ -250,7 +261,7 @@ FSOutput fragMain(VSOutput vertIn) {
         float3 viewDir = normalize(ubo.cameraPos.xyz - vertIn.fragWorldPos);
         float3 viewTS  = mul(TBN, viewDir);   // view direction in tangent space
 
-        uv = pomDisplacedUV(uv, viewTS, push.heightMapIndex,
+        uv = pomDisplacedUV(uv, viewTS, heightMapIndex,
                             ubo.pomParams.x,  // depthScale
                             ubo.pomParams.y,  // minSteps
                             ubo.pomParams.z); // maxSteps
@@ -286,31 +297,31 @@ FSOutput fragMain(VSOutput vertIn) {
     // --- Normal ---
     // Sample the normal map if present, otherwise use the geometric normal.
     float3 norm;
-    if (push.normalMapIndex == 0xFFFFu)
+    if (normalMapIndex == 0xFFFFu)
     {
         norm = normalize(vertIn.fragNormal);
     }
     else
     {
-        float3 sampledNormal = textures[NonUniformResourceIndex(push.normalMapIndex)].Sample(uv).rgb;
+        float3 sampledNormal = textures[NonUniformResourceIndex(normalMapIndex)].Sample(uv).rgb;
         sampledNormal = sampledNormal * 2.0 - 1.0; // [0,1] → [-1,1]
         float3x3 TBN = float3x3(vertIn.fragTangent, vertIn.fragBitangent, vertIn.fragNormal);
         norm = normalize(mul(transpose(TBN), sampledNormal));
     }
 
     // --- Material ---
-    float3 albedo = (push.textureIndex == 0xFFFFu)
+    float3 albedo = (textureIndex == 0xFFFFu)
                   ? float3(1.0, 1.0, 1.0)
-                  : textures[NonUniformResourceIndex(push.textureIndex)].Sample(uv).rgb;
+                  : textures[NonUniformResourceIndex(textureIndex)].Sample(uv).rgb;
     albedo *= vertIn.fragColor;
 
     // Metallic-roughness map (glTF convention: G=roughness, B=metallic, linear space).
     // Falls back to the per-scene defaults set via ImGui when no map is bound.
     float roughness = ubo.materialParams.y;
     float metallic  = ubo.materialParams.z;
-    if (push.metallicRoughnessIndex != 0xFFFFu)
+    if (metallicRoughnessIndex != 0xFFFFu)
     {
-        float3 mrSample = textures[NonUniformResourceIndex(push.metallicRoughnessIndex)].Sample(uv).rgb;
+        float3 mrSample = textures[NonUniformResourceIndex(metallicRoughnessIndex)].Sample(uv).rgb;
         roughness = mrSample.g;
         metallic  = mrSample.b;
     }
