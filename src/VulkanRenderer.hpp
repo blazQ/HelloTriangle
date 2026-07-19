@@ -2,14 +2,11 @@
 
 #include <array>
 #include <cstdint>
-#include <cstring>
 #include <filesystem>
+#include <memory>
+#include <vector>
 #include <fstream>
 #include <iostream>
-#include <memory>
-#include <stdexcept>
-#include <string>
-#include <vector>
 
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #include <glm/glm.hpp>
