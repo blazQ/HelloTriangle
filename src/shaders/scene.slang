@@ -237,17 +237,23 @@ struct FSOutput
 [shader("fragment")]
 FSOutput fragMain(VSOutput vertIn) {
     // Unpacking:
-    
     uint textureIndex = (push.texIndices01 >> 16) & 0xFFFF;
     uint metallicRoughnessIndex = push.texIndices01 & 0xFFFF;
     uint heightMapIndex = (push.texIndices23 >> 16) & 0xFFFF;
     uint normalMapIndex = push.texIndices23 & 0xFFFF;
 
     // Tangent basis:
-
     float3 T = normalize(vertIn.fragTangent.xyz);
     float3 N = normalize(vertIn.fragNormal);
     float3 B = cross(N, T) * vertIn.fragTangent.w;
+
+    // Light dir normalized:
+    float3 L = normalize(ubo.lightDir.xyz);
+
+    // View Vector, Camera Distance
+    float3 toCamera = ubo.cameraPos.xyz - vertIn.fragWorldPos;
+    float toCameraDist = length(toCamera);
+    float3 V = toCamera / toCameraDist;
 
     // --- Parallax Occlusion Mapping ---
     // Displace the UV before any texture sampling so all maps (albedo, normal, metallic)
@@ -258,8 +264,7 @@ FSOutput fragMain(VSOutput vertIn) {
         // Build the TBN matrix (rows = T, B, N in world space).
         // Multiplying a world-space vector by this matrix gives tangent-space coordinates.
         float3x3 TBN   = float3x3(T, B, N);
-        float3 viewDir = normalize(ubo.cameraPos.xyz - vertIn.fragWorldPos);
-        float3 viewTS  = mul(TBN, viewDir);   // view direction in tangent space
+        float3 viewTS  = mul(TBN, V);   // view direction in tangent space
 
         uv = pomDisplacedUV(uv, viewTS, heightMapIndex,
                             ubo.pomParams.x,  // depthScale
@@ -275,7 +280,7 @@ FSOutput fragMain(VSOutput vertIn) {
     // Slope-scale bias: surfaces nearly parallel to the light need more bias to
     // avoid shadow acne. Uses the geometric normal (not normal-mapped) because
     // the shadow map was rendered from raw geometry.
-    float NdotL_geo   = max(dot(N, normalize(ubo.lightDir.xyz)), 0.0);
+    float NdotL_geo   = max(dot(N, L), 0.0);
     float shadowBias  = lerp(ubo.shadowParams.x, ubo.shadowParams.y, NdotL_geo);
     float biasedDepth = currentDepth - shadowBias;
 
@@ -326,8 +331,6 @@ FSOutput fragMain(VSOutput vertIn) {
     // Conductors (metallic=1) use the albedo as their F0.
     float3 F0 = lerp(float3(0.04), albedo, metallic);
 
-    float3 V = normalize(ubo.cameraPos.xyz - vertIn.fragWorldPos);
-
     // --- Lighting ---
     float ambient = ubo.materialParams.x;
 
@@ -336,7 +339,6 @@ FSOutput fragMain(VSOutput vertIn) {
     float3 color = ambient * (albedo * (1.0 - metallic) + F0 * metallic);
 
     // Directional light
-    float3 L = normalize(ubo.lightDir.xyz);
     color += shadow * PBR(N, V, L, albedo, metallic, roughness, F0, float3(1.0));
 
     // Point lights
@@ -372,9 +374,8 @@ FSOutput fragMain(VSOutput vertIn) {
         float fogHeightFalloff = ubo.fogParams.y;
         float fogMaxOpacity    = ubo.fogParams.z;
 
-        float dist      = length(ubo.cameraPos.xyz - vertIn.fragWorldPos);
         float heightAtt = exp(-fogHeightFalloff * max(vertIn.fragWorldPos.z, 0.0));
-        float fogFactor = 1.0 - exp(-fogDensity * dist * heightAtt);
+        float fogFactor = 1.0 - exp(-fogDensity * toCameraDist * heightAtt);
               fogFactor = clamp(fogFactor, 0.0, fogMaxOpacity);
 
         color = lerp(color, ubo.fogColor.xyz, fogFactor);
