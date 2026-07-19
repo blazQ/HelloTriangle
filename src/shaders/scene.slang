@@ -116,8 +116,7 @@ struct VSOutput
     float4 fragPosLightSpace;
     float3 fragNormal;
     float3 fragWorldPos;
-    float3 fragTangent;   // world-space tangent
-    float3 fragBitangent; // world-space bitangent (cross(N,T)*sign)
+    float4 fragTangent;   // world-space tangent + sgn
 };
 
 [shader("vertex")]
@@ -138,12 +137,9 @@ VSOutput vertMain(VSInput input) {
     float3 T = normalize(mul(normalMatrix, input.inTangent.xyz));
     // Re-orthogonalise: remove any component of T that crept into N's direction.
     T = normalize(T - dot(T, N) * N);
-    // Bitangent: perpendicular to both N and T. The sign from w handles mirrored UVs.
-    float3 B = cross(N, T) * input.inTangent.w;
 
     output.fragNormal    = N;
-    output.fragTangent   = T;
-    output.fragBitangent = B;
+    output.fragTangent   = float4(T, input.inTangent.w);
     return output;
 }
 
@@ -247,6 +243,12 @@ FSOutput fragMain(VSOutput vertIn) {
     uint heightMapIndex = (push.texIndices23 >> 16) & 0xFFFF;
     uint normalMapIndex = push.texIndices23 & 0xFFFF;
 
+    // Tangent basis:
+
+    float3 T = normalize(vertIn.fragTangent.xyz);
+    float3 N = normalize(vertIn.fragNormal);
+    float3 B = cross(N, T) * vertIn.fragTangent.w;
+
     // --- Parallax Occlusion Mapping ---
     // Displace the UV before any texture sampling so all maps (albedo, normal, metallic)
     // show the same displaced surface. Only applied when a height map is bound.
@@ -255,9 +257,7 @@ FSOutput fragMain(VSOutput vertIn) {
     {
         // Build the TBN matrix (rows = T, B, N in world space).
         // Multiplying a world-space vector by this matrix gives tangent-space coordinates.
-        float3x3 TBN   = float3x3(normalize(vertIn.fragTangent),
-                                   normalize(vertIn.fragBitangent),
-                                   normalize(vertIn.fragNormal));
+        float3x3 TBN   = float3x3(T, B, N);
         float3 viewDir = normalize(ubo.cameraPos.xyz - vertIn.fragWorldPos);
         float3 viewTS  = mul(TBN, viewDir);   // view direction in tangent space
 
@@ -275,7 +275,7 @@ FSOutput fragMain(VSOutput vertIn) {
     // Slope-scale bias: surfaces nearly parallel to the light need more bias to
     // avoid shadow acne. Uses the geometric normal (not normal-mapped) because
     // the shadow map was rendered from raw geometry.
-    float NdotL_geo   = max(dot(normalize(vertIn.fragNormal), normalize(ubo.lightDir.xyz)), 0.0);
+    float NdotL_geo   = max(dot(N, normalize(ubo.lightDir.xyz)), 0.0);
     float shadowBias  = lerp(ubo.shadowParams.x, ubo.shadowParams.y, NdotL_geo);
     float biasedDepth = currentDepth - shadowBias;
 
@@ -295,18 +295,13 @@ FSOutput fragMain(VSOutput vertIn) {
     }
 
     // --- Normal ---
-    // Sample the normal map if present, otherwise use the geometric normal.
-    float3 norm;
-    if (normalMapIndex == 0xFFFFu)
-    {
-        norm = normalize(vertIn.fragNormal);
-    }
-    else
+    // If there's a normal map, geometric normal gets upgraded to "shading" normal
+    if (normalMapIndex != 0xFFFFu)
     {
         float3 sampledNormal = textures[NonUniformResourceIndex(normalMapIndex)].Sample(uv).rgb;
         sampledNormal = sampledNormal * 2.0 - 1.0; // [0,1] → [-1,1]
-        float3x3 TBN = float3x3(vertIn.fragTangent, vertIn.fragBitangent, vertIn.fragNormal);
-        norm = normalize(mul(transpose(TBN), sampledNormal));
+        float3x3 TBN = float3x3(T, B, N);
+        N = normalize(mul(transpose(TBN), sampledNormal));
     }
 
     // --- Material ---
@@ -342,7 +337,7 @@ FSOutput fragMain(VSOutput vertIn) {
 
     // Directional light
     float3 L = normalize(ubo.lightDir.xyz);
-    color += shadow * PBR(norm, V, L, albedo, metallic, roughness, F0, float3(1.0));
+    color += shadow * PBR(N, V, L, albedo, metallic, roughness, F0, float3(1.0));
 
     // Point lights
     int numPointLights = (int)ubo.lightCounts.x;
@@ -360,7 +355,7 @@ FSOutput fragMain(VSOutput vertIn) {
         float t   = clamp(dist / plRadius, 0.0, 1.0);
         float att = (1.0 - t * t) * (1.0 - t * t) * plIntensity;
 
-        color += att * PBR(norm, V, L_pl, albedo, metallic, roughness, F0, plColor);
+        color += att * PBR(N, V, L_pl, albedo, metallic, roughness, F0, plColor);
     }
 
     // --- Fog ---
@@ -394,5 +389,5 @@ FSOutput fragMain(VSOutput vertIn) {
     else
         color = clamp(color, 0.0f, 1.0f);
 
-    return FSOutput(float4(color, 1.0), float4(norm * 0.5 + 0.5, 1.0));
+    return FSOutput(float4(color, 1.0), float4(N * 0.5 + 0.5, 1.0));
 }
