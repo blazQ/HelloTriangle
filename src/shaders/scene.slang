@@ -1,3 +1,5 @@
+static const float PI = 3.14159265358979323846f;
+
 struct VSInput {
     float3 inPosition;
     float3 inColor;
@@ -161,7 +163,7 @@ float D_GGX(float NdotH, float alpha)
 {
     float a2 = alpha * alpha;
     float denom = NdotH * NdotH * (a2 - 1.0) + 1.0;
-    return a2 / (3.14159265 * denom * denom);
+    return a2 / (PI * denom * denom);
 }
 
 // G — Smith's combined geometry/shadowing-masking term via Schlick-GGX.
@@ -223,7 +225,7 @@ float3 PBR(float3 N, float3 V, float3 L,
     // Diffuse lobe: energy conservation — only the non-reflected (1-F) fraction
     // scatters as diffuse, and metals have no diffuse contribution.
     float3 kD = (float3(1.0) - F) * (1.0 - metallic);
-    float3 diffuse = kD * albedo / 3.14159265;
+    float3 diffuse = kD * albedo / PI;
 
     return (diffuse + specular) * radiance * NdotL;
 }
@@ -261,10 +263,7 @@ FSOutput fragMain(VSOutput vertIn) {
     float2 uv = vertIn.fragTexCoord;
     if (heightMapIndex != 0xFFFFu)
     {
-        // Build the TBN matrix (rows = T, B, N in world space).
-        // Multiplying a world-space vector by this matrix gives tangent-space coordinates.
-        float3x3 TBN   = float3x3(T, B, N);
-        float3 viewTS  = mul(TBN, V);   // view direction in tangent space
+        float3 viewTS = float3(dot(T, V), dot(B, V), dot(N, V));
 
         uv = pomDisplacedUV(uv, viewTS, heightMapIndex,
                             ubo.pomParams.x,  // depthScale
@@ -305,8 +304,7 @@ FSOutput fragMain(VSOutput vertIn) {
     {
         float3 sampledNormal = textures[NonUniformResourceIndex(normalMapIndex)].Sample(uv).rgb;
         sampledNormal = sampledNormal * 2.0 - 1.0; // [0,1] → [-1,1]
-        float3x3 TBN = float3x3(T, B, N);
-        N = normalize(mul(transpose(TBN), sampledNormal));
+        N = normalize(sampledNormal.x * T + sampledNormal.y * B + sampledNormal.z * N);
     }
 
     // --- Material ---
