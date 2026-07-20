@@ -226,6 +226,8 @@ void VulkanRenderer::createGraphicsPipeline()
                                                             vk::ColorComponentFlagBits::eB |
                                                             vk::ColorComponentFlagBits::eA};
     std::array<vk::PipelineColorBlendAttachmentState, 2> blendAtts = {colorBlendAtt, colorBlendAtt};
+    blendAtts[1].colorWriteMask = {};
+
     vk::PipelineColorBlendStateCreateInfo colorBlending{.logicOpEnable = vk::False,
                                                         .attachmentCount =
                                                             uint32_t(blendAtts.size()),
@@ -1449,6 +1451,12 @@ void VulkanRenderer::recreateSwapChain()
 void VulkanRenderer::rebuildMsaa()
 {
     vulkanDevice->getLogicalDevice().waitIdle();
+    normalResolveImageView   = nullptr;
+    normalResolveImage       = nullptr;
+    normalResolveImageMemory = nullptr;
+    normalImageView          = nullptr;
+    normalImage              = nullptr;
+    normalImageMemory        = nullptr;
     colorImageView   = nullptr;
     colorImage       = nullptr;
     colorImageMemory = nullptr;
@@ -1459,6 +1467,7 @@ void VulkanRenderer::rebuildMsaa()
     skyPipeline      = nullptr;
     createDepthResources();
     createColorResources();
+    createNormalResources();
     createGraphicsPipeline();
     createSkyPipeline();
 }
